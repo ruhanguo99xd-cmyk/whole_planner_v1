@@ -1,0 +1,21 @@
+plc_adapter:
+  ros__parameters:
+    backend: real
+    plc_ip: 192.168.2.20
+    rack: 0
+    slot: 1
+    publish_rate_hz: 10.0
+    machine_ready_byte: 1
+    machine_ready_bit: 0
+    safe_to_walk_byte: 1
+    safe_to_walk_bit: 1
+    safe_to_dig_byte: 1
+    safe_to_dig_bit: 2
+    walking_requested_byte: 1
+    walking_requested_bit: 3
+    digging_requested_byte: 1
+    digging_requested_bit: 4
+    fault_active_byte: 1
+    fault_active_bit: 5
+    manual_override_byte: 1
+    manual_override_bit: 6

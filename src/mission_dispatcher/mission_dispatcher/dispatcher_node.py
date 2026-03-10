@@ -77,6 +77,7 @@ class MissionDispatcherNode(Node):
         self.create_subscription(PlcSnapshot, plc_topic, self._on_plc_snapshot, 10)
         self.create_service(Trigger, '/mission_dispatcher/start', self._on_start)
         self.create_service(Trigger, '/mission_dispatcher/stop', self._on_stop)
+        self.create_service(Trigger, '/mission_dispatcher/recover', self._on_recover)
         self.create_service(SubmitMission, '/mission_dispatcher/submit_mission', self._on_submit_mission)
 
         loop_period = float(self.get_parameter('loop_period_sec').value)
@@ -125,6 +126,25 @@ class MissionDispatcherNode(Node):
         self.get_logger().info(f'Mission queued: {mission_id}')
         return response
 
+    def _on_recover(self, request, response):
+        del request
+        if self.mode != PlannerMode.FAULT:
+            response.success = True
+            response.message = 'dispatcher not in fault'
+            return response
+        if self.plc_snapshot and (self.plc_snapshot.fault_active or self.plc_snapshot.manual_override):
+            response.success = False
+            response.message = 'plc fault/manual override still active'
+            return response
+        self._cancel_active_goal('recover_service')
+        self.current_mission = None
+        self.next_phase = None
+        self.retry_count = {'walk': 0, 'dig': 0}
+        self._transition(PlannerMode.IDLE, 'recover_service')
+        response.success = True
+        response.message = 'dispatcher recovered to idle'
+        return response
+
     def _on_plc_snapshot(self, msg: PlcSnapshot) -> None:
         self.plc_snapshot = msg
 
@@ -153,6 +173,8 @@ class MissionDispatcherNode(Node):
         self._apply_decision(decision)
 
     def _apply_decision(self, decision: Decision) -> None:
+        if decision.mode == PlannerMode.FAULT and (self.active_goal_handle is not None or self.goal_request_in_flight):
+            self._cancel_active_goal('fault_transition')
         if decision.mode != self.mode:
             self._transition(decision.mode, decision.reason)
         if decision.command == 'dispatch_walk':
@@ -321,7 +343,13 @@ def main() -> None:
     executor.add_node(node)
     try:
         executor.spin()
+    except KeyboardInterrupt:
+        pass
     finally:
         executor.shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass

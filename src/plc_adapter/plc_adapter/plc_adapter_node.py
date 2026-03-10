@@ -18,6 +18,20 @@ class PlcAdapterNode(Node):
         self.declare_parameter('plc_ip', '192.168.2.20')
         self.declare_parameter('rack', 0)
         self.declare_parameter('slot', 1)
+        self.declare_parameter('machine_ready_byte', 1)
+        self.declare_parameter('machine_ready_bit', 0)
+        self.declare_parameter('safe_to_walk_byte', 1)
+        self.declare_parameter('safe_to_walk_bit', 1)
+        self.declare_parameter('safe_to_dig_byte', 1)
+        self.declare_parameter('safe_to_dig_bit', 2)
+        self.declare_parameter('walking_requested_byte', 1)
+        self.declare_parameter('walking_requested_bit', 3)
+        self.declare_parameter('digging_requested_byte', 1)
+        self.declare_parameter('digging_requested_bit', 4)
+        self.declare_parameter('fault_active_byte', 1)
+        self.declare_parameter('fault_active_bit', 5)
+        self.declare_parameter('manual_override_byte', 1)
+        self.declare_parameter('manual_override_bit', 6)
         self.backend = str(self.get_parameter('backend').value)
         self.publisher = self.create_publisher(PlcSnapshot, '/plc/status', 10)
         self._sequence: List[Dict[str, Any]] = []
@@ -26,6 +40,15 @@ class PlcAdapterNode(Node):
         self._step_started_at = time.monotonic()
         self._snap7 = None
         self._snap7_client = None
+        self._bit_map = {
+            'machine_ready': self._bit_spec('machine_ready'),
+            'safe_to_walk': self._bit_spec('safe_to_walk'),
+            'safe_to_dig': self._bit_spec('safe_to_dig'),
+            'walking_requested': self._bit_spec('walking_requested'),
+            'digging_requested': self._bit_spec('digging_requested'),
+            'fault_active': self._bit_spec('fault_active'),
+            'manual_override': self._bit_spec('manual_override'),
+        }
 
         if self.backend == 'mock':
             self._load_mock_sequence()
@@ -35,6 +58,11 @@ class PlcAdapterNode(Node):
         period = 1.0 / float(self.get_parameter('publish_rate_hz').value)
         self.create_timer(period, self._publish_snapshot)
         self.get_logger().info(f'plc_adapter started: backend={self.backend}')
+
+    def _bit_spec(self, prefix: str) -> tuple[int, int]:
+        byte = int(self.get_parameter(f'{prefix}_byte').value)
+        bit = int(self.get_parameter(f'{prefix}_bit').value)
+        return (byte, bit)
 
     def _load_mock_sequence(self) -> None:
         sequence_file = str(self.get_parameter('mock_sequence_file').value)
@@ -82,13 +110,13 @@ class PlcAdapterNode(Node):
 
     def _read_real_snapshot(self) -> PlcSnapshot:
         msg = PlcSnapshot()
-        msg.machine_ready = self._read_q_bit(1, 0)
-        msg.safe_to_walk = self._read_q_bit(1, 1)
-        msg.safe_to_dig = self._read_q_bit(1, 2)
-        msg.walking_requested = self._read_q_bit(1, 3)
-        msg.digging_requested = self._read_q_bit(1, 4)
-        msg.fault_active = self._read_q_bit(1, 5)
-        msg.manual_override = self._read_q_bit(1, 6)
+        msg.machine_ready = self._read_q_bit(*self._bit_map['machine_ready'])
+        msg.safe_to_walk = self._read_q_bit(*self._bit_map['safe_to_walk'])
+        msg.safe_to_dig = self._read_q_bit(*self._bit_map['safe_to_dig'])
+        msg.walking_requested = self._read_q_bit(*self._bit_map['walking_requested'])
+        msg.digging_requested = self._read_q_bit(*self._bit_map['digging_requested'])
+        msg.fault_active = self._read_q_bit(*self._bit_map['fault_active'])
+        msg.manual_override = self._read_q_bit(*self._bit_map['manual_override'])
         msg.fault_code = 1 if msg.fault_active else 0
         msg.source = 'real_plc'
         return msg
@@ -119,7 +147,13 @@ def main() -> None:
     executor.add_node(node)
     try:
         executor.spin()
+    except KeyboardInterrupt:
+        pass
     finally:
         executor.shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
