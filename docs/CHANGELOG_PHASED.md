@@ -18,6 +18,9 @@
 - walk/dig action 协议改为 `START/STOP` 命令，结果仅返回 `received`
 - 执行状态统一改为 `/mobility/status`、`/excavation/status`
 - 验证：walk legacy + dig legacy command 跑通一条完整任务链
+- dig 主链新增 `legacy_dig_planner_orchestrator`
+- `phase2_real` 默认切到 `PRSdata_send + trajectory_planner + load + return` 在线规划链
+- 验证：`trajectory_planner/load/return` 已通过 dig action 在线跑通，不再只是编译通过
 
 ## Phase 3
 - PLC real bit 映射改为参数化

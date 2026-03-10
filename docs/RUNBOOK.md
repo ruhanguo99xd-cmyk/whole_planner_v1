@@ -64,9 +64,14 @@ ros2 run mission_dispatcher submit_demo_mission
 ### 当前最小真实链组成
 - 真实 walk 核心：`autonomous_walk`
 - walk 环境 mock：`mock_nav2_server`
-- 真实 dig 动作逻辑：`plc_control_test1`
-- dig 感知兼容 mock：`legacy_perception_notifier`
+- dig 调度桥：`legacy_dig_planner_orchestrator`
+- dig 真实规划链：`prsdata_server`、`perceive_truck_server`、`trajectory_planner`、`load`、`return`
 - action 协议：`START/STOP` 命令 + `/mobility/status`、`/excavation/status` 状态回传
+- 默认启动模式：`launch_legacy_dig_planner:=true`
+- 回退旧链路：
+```bash
+ros2 launch mission_bringup phase2_real.launch.py launch_legacy_dig:=true launch_legacy_dig_planner:=false
+```
 
 ### 系统库安装后的验收 Checklist
 
@@ -101,7 +106,10 @@ ros2 run mission_dispatcher submit_demo_mission
    - `Sent stop command to walk`
    - `WALKING -> TRANSITION`
    - `TRANSITION -> DIG_PREP -> DIGGING`
-   - `Sent start command to dig`
+    - `Sent start command to dig`
+   - `trajectory_planner` 发布 `excavation_end_length`
+   - `load_node` 输出 `csv_created/load`
+   - `return_node` 输出 `csv_created/return`
    - `Sent stop command to dig`
    - `DIGGING -> IDLE`
 7. 抽查 status topic
