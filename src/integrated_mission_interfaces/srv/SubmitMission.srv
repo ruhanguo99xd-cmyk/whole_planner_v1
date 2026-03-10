@@ -1,0 +1,9 @@
+string mission_id
+geometry_msgs/PoseStamped walk_target
+string dig_target_zone
+string walk_constraints_json
+string dig_parameters_json
+uint8 priority
+---
+bool accepted
+string message

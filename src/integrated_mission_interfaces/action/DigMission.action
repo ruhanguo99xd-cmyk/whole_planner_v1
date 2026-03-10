@@ -1,0 +1,15 @@
+string mission_id
+string target_zone
+string process_parameters_json
+string safety_boundary_json
+uint8 priority
+float32 timeout_sec
+---
+bool success
+uint16 error_code
+string message
+bool retryable
+float32 material_volume
+---
+string phase
+float32 progress

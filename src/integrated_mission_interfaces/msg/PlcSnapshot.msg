@@ -1,0 +1,10 @@
+bool machine_ready
+bool safe_to_walk
+bool safe_to_dig
+bool walking_requested
+bool digging_requested
+bool fault_active
+bool manual_override
+uint32 fault_code
+string source
+builtin_interfaces/Time stamp

@@ -1,0 +1,42 @@
+loop: true
+steps:
+  - duration_sec: 2.0
+    machine_ready: true
+    safe_to_walk: true
+    safe_to_dig: false
+    walking_requested: false
+    digging_requested: false
+    fault_active: false
+    manual_override: false
+    fault_code: 0
+    source: mock_boot
+  - duration_sec: 5.0
+    machine_ready: true
+    safe_to_walk: true
+    safe_to_dig: false
+    walking_requested: true
+    digging_requested: false
+    fault_active: false
+    manual_override: false
+    fault_code: 0
+    source: mock_walk
+  - duration_sec: 6.0
+    machine_ready: true
+    safe_to_walk: false
+    safe_to_dig: true
+    walking_requested: false
+    digging_requested: true
+    fault_active: false
+    manual_override: false
+    fault_code: 0
+    source: mock_dig
+  - duration_sec: 2.0
+    machine_ready: true
+    safe_to_walk: true
+    safe_to_dig: false
+    walking_requested: false
+    digging_requested: false
+    fault_active: false
+    manual_override: false
+    fault_code: 0
+    source: mock_idle
