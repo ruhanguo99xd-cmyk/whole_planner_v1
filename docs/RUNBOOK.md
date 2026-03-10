@@ -68,6 +68,60 @@ ros2 run mission_dispatcher submit_demo_mission
 - dig 感知兼容 mock：`legacy_perception_notifier`
 - action 协议：`START/STOP` 命令 + `/mobility/status`、`/excavation/status` 状态回传
 
+### 系统库安装后的验收 Checklist
+
+1. 检查系统库
+```bash
+dpkg -s libnlopt-dev
+pkg-config --modversion nlopt
+```
+2. 全量重编译
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/build_phase2_minimal.sh
+```
+3. 跑单测
+```bash
+colcon --log-base log_phase2 test --build-base build_phase2 --install-base install_phase2 --packages-select mission_dispatcher plc_adapter mobility_planner_core excavation_planner_core
+colcon --log-base log_phase2 test-result --all --verbose
+```
+4. 启动真实联调链
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/run_phase2_real.sh
+```
+5. 提交大规划 demo 任务
+```bash
+source install_phase2/setup.bash
+ros2 run mission_dispatcher submit_demo_mission
+```
+6. 期望日志
+   - `IDLE -> WALK_PREP -> WALKING`
+   - `Sent start command to walk`
+   - `Sent stop command to walk`
+   - `WALKING -> TRANSITION`
+   - `TRANSITION -> DIG_PREP -> DIGGING`
+   - `Sent start command to dig`
+   - `Sent stop command to dig`
+   - `DIGGING -> IDLE`
+7. 抽查 status topic
+```bash
+source install_phase2/setup.bash
+timeout 8s ros2 topic echo /mobility/status --once
+timeout 8s ros2 topic echo /excavation/status --once
+```
+8. 抽查直接 action 协议
+```bash
+source install_phase2/setup.bash
+ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 1, mission_id: 'check-walk', target_pose: {header: {frame_id: 'map'}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
+ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 2, mission_id: 'check-walk', target_pose: {header: {frame_id: 'map'}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
+ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/DigMission "{command: 1, mission_id: 'check-dig', target_zone: 'bench-A', process_parameters_json: '{}', safety_boundary_json: '{}', priority: 1, timeout_sec: 10.0}"
+ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/DigMission "{command: 2, mission_id: 'check-dig', target_zone: 'bench-A', process_parameters_json: '{}', safety_boundary_json: '{}', priority: 1, timeout_sec: 10.0}"
+```
+9. 期望 action result
+   - `accepted: true`
+   - `message: received`
+
 ## Phase 3：PLC real/mock 切换
 
 ### mock
