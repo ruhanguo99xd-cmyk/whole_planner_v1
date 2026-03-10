@@ -4,11 +4,18 @@
 
 1. ROS 2 Humble
 2. `colcon`
-3. `nav2_msgs` 可用
-4. `python3-yaml` 可用
-5. 如果要启用真实 PLC：
+3. `libnlopt-dev`
+4. `nav2_msgs` 可用
+5. `python3-yaml` 可用
+6. 如果要启用真实 PLC：
    - 安装 `snap7`
    - 配置 `config/plc/real_plc.example.yaml`
+
+### Ubuntu 依赖安装
+```bash
+sudo apt-get update
+sudo apt-get install -y libnlopt-dev
+```
 
 ## Phase 1：mock 最小闭环
 
@@ -40,6 +47,8 @@ cd /home/ruhanguo/shovel_robot/whole_planner_v1
 bash scripts/build_phase2_minimal.sh
 ```
 
+`build_phase2_minimal.sh` 会先检查系统里是否已安装 `libnlopt-dev`，缺失时直接退出。
+
 ### 启动
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
@@ -57,6 +66,7 @@ ros2 run mission_dispatcher submit_demo_mission
 - walk 环境 mock：`mock_nav2_server`
 - 真实 dig 动作逻辑：`plc_control_test1`
 - dig 感知兼容 mock：`legacy_perception_notifier`
+- action 协议：`START/STOP` 命令 + `/mobility/status`、`/excavation/status` 状态回传
 
 ## Phase 3：PLC real/mock 切换
 
@@ -77,10 +87,39 @@ ros2 run plc_adapter plc_adapter_node --ros-args --params-file /home/ruhanguo/sh
 - 处理：优先使用 `install_phase2`，或手工清理旧 `build/install/log` 后重建
 
 ### `nlopt` 缺失导致 `tra_planning` 不能编译
-- 当前默认策略：源码保留，`COLCON_IGNORE` 关闭默认构建
-- 处理：安装 `nlopt` 开发库后移除 `src/vendor/excavation_planner_core/tra_planning/COLCON_IGNORE`
+- 现象：`build_phase2_minimal.sh` 直接报缺少 `libnlopt-dev`
+- 处理：
+```bash
+sudo apt-get update
+sudo apt-get install -y libnlopt-dev
+```
 
-### legacy action 出现 `unexpected goal/result response`
-- 当前现象：最小真实链能完成，但 ROS2 Python action 在 legacy 组合下有重复响应告警
-- 影响：当前闭环可跑，日志会有噪音
-- 后续：建议把 dig legacy 适配层从 Python action client 收敛到单线程串行桥接节点
+### 子系统已经完成但大规划不切相
+- 现象：walk/dig 已完成，但 dispatcher 还停在 `WALKING` 或 `DIGGING`
+- 检查：
+  - `/mobility/status` 或 `/excavation/status` 是否发布了 `completed`
+  - 随后是否发布了 `stopped` 或 `idle`
+  - `mission_id` 是否与当前任务一致
+- 处理：优先排查 legacy backend 的状态发布链，不要在 dispatcher 内硬编码补状态
+
+## 常见操作
+
+### 直接向 walk 发送开始/停止命令
+```bash
+source install_phase2/setup.bash
+ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 1, mission_id: 'manual-walk', target_pose: {header: {frame_id: 'map'}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
+ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 2, mission_id: 'manual-walk', target_pose: {header: {frame_id: 'map'}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
+```
+
+### 直接向 dig 发送开始/停止命令
+```bash
+source install_phase2/setup.bash
+ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/DigMission "{command: 1, mission_id: 'manual-dig', target_zone: 'bench-A', process_parameters_json: '{}', safety_boundary_json: '{}', priority: 1, timeout_sec: 10.0}"
+ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/DigMission "{command: 2, mission_id: 'manual-dig', target_zone: 'bench-A', process_parameters_json: '{}', safety_boundary_json: '{}', priority: 1, timeout_sec: 10.0}"
+```
+
+### 查看大规划状态
+```bash
+source install/setup.bash
+ros2 topic echo /mission_dispatcher/mode
+```

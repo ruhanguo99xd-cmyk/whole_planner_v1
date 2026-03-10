@@ -11,15 +11,20 @@
 - 复制 `anew_autowalk_v3` 到 `src/vendor/mobility_planner_core` 和 `vendor/mobility_planner_core`
 - 复制 `tra_planning0226` 到 `src/vendor/excavation_planner_core` 和 `vendor/excavation_planner_core`
 - 接入 `autonomous_walk` legacy walk 服务
-- 接入 `plc_control_test1` legacy dig action
+- 接入 `plc_control_test1` legacy dig command 服务
 - 为最小真实链补 `mock_nav2_server`、`legacy_perception_notifier`
-- 验证：walk legacy + dig legacy action 跑通一条完整任务链
+- `tra_planning`、`load`、`return` 移除 `COLCON_IGNORE`
+- `nlopt` 构建依赖从工作区内置目录切换为系统 `libnlopt-dev`
+- walk/dig action 协议改为 `START/STOP` 命令，结果仅返回 `received`
+- 执行状态统一改为 `/mobility/status`、`/excavation/status`
+- 验证：walk legacy + dig legacy command 跑通一条完整任务链
 
 ## Phase 3
 - PLC real bit 映射改为参数化
 - dispatcher 增加 `recover` 服务
 - dispatcher 在 FAULT 转移时主动取消当前 goal
 - 增加 PLC 映射单测
+- 修复 legacy stop 收口顺序，消除重复 action 响应告警
 - 验证：9 项单测通过，真实链回归通过
 
 ## Phase 4
