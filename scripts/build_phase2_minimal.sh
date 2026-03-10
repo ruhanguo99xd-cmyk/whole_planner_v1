@@ -21,6 +21,7 @@ colcon --log-base log_phase2 build \
     planner_client \
     autonomous_walk \
     point_cloud_processing_pkg \
+    PRSdata_send \
     truck_perceive \
     shovel_interfaces \
     plc_control \
