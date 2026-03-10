@@ -14,6 +14,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(truck_perceive REQUIRED)
 find_package(tra_planning REQUIRED)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/NloptSupport.cmake)
 
 add_executable(
      load 
@@ -40,10 +41,7 @@ ament_target_dependencies(load
     tra_planning
 )
 
-# 使用target_link_libraries链接非ROS库
-target_link_libraries(load
-    /usr/lib/x86_64-linux-gnu/libnlopt.so  
-)
+integrated_mission_link_nlopt(load)
 
 # 安装配置
 # 1.安装可执行目标

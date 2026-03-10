@@ -14,6 +14,7 @@ find_package(std_msgs REQUIRED)    # 用了std_msgs/Bool
 find_package(point_cloud_processing_pkg REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(rosidl_default_runtime REQUIRED)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/NloptSupport.cmake)
 
 
 # 添加可执行文件
@@ -57,8 +58,8 @@ rosidl_target_interfaces(trajectory_planner
 # 使用target_link_libraries链接非ROS库
 target_link_libraries(trajectory_planner
     ${PCL_LIBRARIES}
-    /usr/lib/x86_64-linux-gnu/libnlopt.so  
 )
+integrated_mission_link_nlopt(trajectory_planner)
 
 # 安装配置
 # 1.安装可执行目标

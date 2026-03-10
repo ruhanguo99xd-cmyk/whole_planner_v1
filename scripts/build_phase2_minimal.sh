@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -e
 cd "$(dirname "$0")/.."
+
+if ! dpkg-query -W -f='${db:Status-Status}\n' libnlopt-dev 2>/dev/null | grep -qx installed; then
+  echo "Missing required system package: libnlopt-dev" >&2
+  echo "Install it with: sudo apt-get update && sudo apt-get install -y libnlopt-dev" >&2
+  exit 1
+fi
+
 colcon --log-base log_phase2 build \
   --build-base build_phase2 \
   --install-base install_phase2 \
@@ -14,5 +21,9 @@ colcon --log-base log_phase2 build \
     planner_client \
     autonomous_walk \
     point_cloud_processing_pkg \
+    truck_perceive \
     shovel_interfaces \
-    plc_control
+    plc_control \
+    tra_planning \
+    load \
+    return
