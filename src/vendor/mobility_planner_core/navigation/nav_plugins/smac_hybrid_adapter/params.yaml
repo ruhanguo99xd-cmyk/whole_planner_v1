@@ -1,0 +1,15 @@
+smac_hybrid_adapter:
+  ros__parameters:
+    plugins: ["smac_planner"]
+    smac_planner:
+      plugin: "smac_hybrid_adapter/SmacHybridAdapter"
+      tolerance: 0.2
+      use_astar: false
+      allow_unknown: true
+      max_iterations: 10000
+      max_on_approach_iterations: 1000
+      lookahead_dist: 0.5
+      time_limit: 1.0
+      downsample_costmap: true
+      downsampling_factor: 2
+      verbose: false

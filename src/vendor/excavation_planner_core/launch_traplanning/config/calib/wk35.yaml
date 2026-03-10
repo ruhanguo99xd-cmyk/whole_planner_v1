@@ -1,0 +1,29 @@
+# WK35参数配置文件，暂未验证
+load_node:
+  ros__parameters:
+    crowd.ratio: 5.13   #推压减速比（推压轴齿轮比推压二轴齿轮）
+    crowd.gear_diameter_m: 0.68   # 推压齿轮直径（m）
+    crowd.zero_m: 8.621   # 推压零点位置（m）
+    hoist.drum_diameter_m: 1.425  #  提升卷筒直径（m）
+    hoist.zero_m: 4.45    # 提升零点位置（m）
+    encoder.counts_per_rev: 4096.0  # 编码器每转脉冲数
+
+
+return_node:
+  ros__parameters:
+    crowd.ratio: 5.13   #推压减速比（推压轴齿轮比推压二轴齿轮）
+    crowd.gear_diameter_m: 0.68   # 推压齿轮直径（m）
+    crowd.zero_m: 8.621   # 推压零点位置（m）
+    hoist.drum_diameter_m: 1.425  #  提升卷筒直径（m）
+    hoist.zero_m: 4.45   # 提升零点位置（m）
+    encoder.counts_per_rev: 4096.0  # 编码器每转脉冲数
+
+
+trajectory_planner:
+  ros__parameters:
+    crowd.ratio: 5.13   #推压减速比（推压轴齿轮比推压二轴齿轮）
+    crowd.gear_diameter_m: 0.68   # 推压齿轮直径（m）
+    crowd.zero_m: 8.621   # 推压零点位置（m）
+    hoist.drum_diameter_m: 1.425  #  提升卷筒直径（m） 0.261056
+    hoist.zero_m: 4.45    # 提升零点位置（m）
+    encoder.counts_per_rev: 4096.0  # 编码器每转脉冲数

@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>tra_planning</name>
+  <version>0.0.0</version>
+  <description>Apache-2.0</description>
+  <maintainer email="1531554489@qq.com">pipixuan</maintainer>
+  <license>TODO: License declaration</license>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend> 
+  <depend>point_cloud_processing_pkg</depend>
+  <build_depend>eigen3_cmake_module</build_depend>
+  <build_depend>eigen3</build_depend>
+  <build_depend>nlopt</build_depend>
+  <build_depend>pcl_conversions</build_depend>
+  <build_depend>pcl_ros</build_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <member_of_group>rosidl_interface_packages</member_of_group>
+  </export>
+</package>

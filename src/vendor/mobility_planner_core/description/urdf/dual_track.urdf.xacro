@@ -1,0 +1,105 @@
+<?xml version="1.0"?>
+<robot name="dual_track" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <material name="dark_grey"><color rgba="0.2 0.2 0.2 1.0"/></material>
+  <material name="industrial_yellow"><color rgba="0.8 0.6 0.0 1.0"/></material>
+  <material name="white"><color rgba="1 1 1 1"/></material>
+  <material name="blue"><color rgba="0 0 1 1"/></material>
+
+  <xacro:property name="track_dist" value="2.4"/>     <xacro:property name="track_len" value="1.925"/>   
+  <xacro:property name="track_h" value="0.5"/>       
+  <xacro:property name="track_w" value="0.5"/>       
+  
+  <xacro:property name="base_l" value="0.9"/>        
+  <xacro:property name="base_w" value="1.8"/>        <xacro:property name="base_h" value="0.5"/>        
+  <xacro:property name="mass" value="7000.0"/>
+
+  <xacro:macro name="inertial_box" params="mass x y z">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${(1.0/12.0) * mass * (y*y + z*z)}" ixy="0" ixz="0"
+        iyy="${(1.0/12.0) * mass * (x*x + z*z)}" iyz="0"
+        izz="${(1.0/12.0) * mass * (x*x + y*y)}"/>
+    </inertial>
+  </xacro:macro>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="${-base_l*0.1} 0 ${(base_h*0.5)}"/>
+      <geometry><box size="${base_l*0.8} ${base_w} ${base_h}"/></geometry>
+      <material name="industrial_yellow"/>
+    </visual>
+
+    <visual>
+      <origin xyz="${base_l*0.3} 0 ${(base_h*1.2)*0.5}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_l*0.4} 0.8 ${base_h*1.2}"/>
+      </geometry>
+      <material name="industrial_yellow"/>
+    </visual>
+
+    <visual>
+      <origin xyz="${base_l*0.5} 0 ${base_h*0.6}" rpy="0 1.57 0"/>
+      <geometry>
+        <cylinder length="0.4" radius="0.08"/>
+      </geometry>
+      <material name="blue"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 ${(base_h*0.5)}"/>
+      <geometry><box size="${base_l} ${base_w} ${base_h}"/></geometry>
+    </collision>
+    <xacro:inertial_box mass="${mass}" x="${base_l}" y="${base_w}" z="${base_h}"/>
+  </link>
+
+  <link name="left_track">
+    <visual>
+      <geometry><box size="${track_len} ${track_w} ${track_h}"/></geometry>
+      <material name="dark_grey"/>
+    </visual>
+    <collision>
+      <geometry><box size="${track_len} ${track_w} ${track_h}"/></geometry>
+    </collision>
+    <xacro:inertial_box mass="50.0" x="${track_len}" y="${track_w}" z="${track_h}"/>
+  </link>
+
+  <joint name="left_track_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="left_track"/>
+    <origin xyz="0 ${(track_dist*0.5)} ${(track_h*0.5)}"/>
+  </joint>
+
+  <link name="right_track">
+    <visual>
+      <geometry><box size="${track_len} ${track_w} ${track_h}"/></geometry>
+      <material name="dark_grey"/>
+    </visual>
+    <collision>
+      <geometry><box size="${track_len} ${track_w} ${track_h}"/></geometry>
+    </collision>
+    <xacro:inertial_box mass="50.0" x="${track_len}" y="${track_w}" z="${track_h}"/>
+  </link>
+
+  <joint name="right_track_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="right_track"/>
+    <origin xyz="0 ${-(track_dist*0.5)} ${(track_h*0.5)}"/>
+  </joint>
+
+  <link name="base_footprint">
+    <visual>
+      <geometry><box size="0.1 0.1 0.001"/></geometry>
+      <material name="white"/>
+    </visual>
+  </link>
+
+  <joint name="base_link_to_base_footprint" type="fixed">
+    <parent link="base_link"/>
+    <child link="base_footprint"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+</robot>

@@ -1,0 +1,279 @@
+###############################################################################
+#                               GLOBAL
+###############################################################################
+amcl:
+  ros__parameters:
+    use_sim_time: true
+    # TF 配置 - 禁用 AMCL TF 发布，由定位链路发布 map->odom
+    publish_tf: false
+    tf_broadcast: false
+    # 粒子滤波参数
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    min_particles: 500
+    max_particles: 2000
+    update_min_a: 0.2
+    update_min_d: 0.2
+    resample_interval: 1
+    transform_tolerance: 0.1
+    # TF 框架配置
+    odom_frame: "odom"
+    base_frame_id: "base_link"
+    global_frame_id: "map"
+    # 地图相关
+    map_topic: /map
+    # 初始位置设置
+    set_initial_pose: false
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
+    # 里程计相关参数
+    first_map_only: false
+
+map_server:
+  ros__parameters:
+    use_sim_time: true
+    yaml_filename: "/home/ruhanguo/anew_autowalk_v3/src/navigation/map_server/maps/map.yaml"
+
+###############################################################################
+#                         COSTMAP COMMON SETTINGS
+###############################################################################
+global_costmap:
+  ros__parameters:
+    use_sim_time: true
+    global_frame: "map"
+    robot_base_frame: "base_link"
+    odom_frame: "odom"
+    width: 800
+    height: 340
+    origin_x: -20
+    origin_y: -8.5
+    resolution: 0.05 # 确保 footprint 准确反映了你的车体大小（包括铲斗）
+    footprint: "[ [1.2, 0.8], [1.2, -0.8], [-1.2, -0.8], [-1.2, 0.8] ]"
+    rolling_window: false
+    track_unknown_space: true
+    plugins: [ 'static_layer', 'inflation_layer' ]
+    map_subscribe_transient_local: true
+    update_frequency: 10.0
+    publish_frequency: 5.0
+    transform_tolerance: 0.5
+
+    static_layer:
+      plugin: "nav2_costmap_2d::StaticLayer"
+      map_subscribe_transient_local: true
+
+    inflation_layer:
+      plugin: "nav2_costmap_2d::InflationLayer"
+      inflation_radius: 5.0
+      cost_scaling_factor: 5.0
+
+local_costmap:
+  ros__parameters:
+    use_sim_time: true
+    global_frame: "map"
+    robot_base_frame: "base_link"
+    rolling_window: true
+    width: 5.0
+    height: 5.0
+    resolution: 0.05
+    track_unknown_space: true
+    plugins: [ "obstacle_layer", "inflation_layer" ]
+    map_subscribe_transient_local: true
+    update_frequency: 10.0
+    publish_frequency: 10.0
+    transform_tolerance: 0.5
+
+    obstacle_layer:
+      plugin: "nav2_costmap_2d::ObstacleLayer"
+      observation_sources: []
+
+    inflation_layer:
+      plugin: "nav2_costmap_2d::InflationLayer"
+      inflation_radius: 5.0
+      cost_scaling_factor: 3.0
+
+###############################################################################
+#                               PLANNER SERVER
+###############################################################################
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 5.0
+
+    use_sim_time: true
+    # planner_plugins: [ "GridBased", "SmacRS" ] #20250107调试修改
+    planner_plugins: [ "GridBased" ]
+
+    ###########################################################################
+    #   Smac Hybrid (A*) — “2.5D Hybrid Planning”
+    #   适用于履带车、轮式差动，支持方向角连续
+    ###########################################################################
+    GridBased:
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      downsample_costmap: false
+      allow_unknown: false
+      tolerance: 0.5 # 减小容忍度，强制它寻找精确解
+      max_iterations: 1000000
+
+      # 以下是核心约束，请确保没有缩进错误
+      motion_model_for_search: "REEDS_SHEPP"
+      minimum_turning_radius: 5.0 # 强制 5 米
+      angle_quantization_bins: 144 # 2.5° 分辨率 (360/2.5=144)
+
+      # 惩罚项必须极大，否则它会为了靠近目标而违反约束
+      non_straight_penalty: 5.0 # 提高到 1000
+      change_penalty: 5.0 # 惩罚倒车/前进切换
+      reverse_penalty: 4.0
+      cost_penalty: 2.0
+
+      # 解析解参数
+      analytic_expansion: True
+      analytic_expansion_max_length: 20.0 # 增大解析长度
+
+      lookup_table_size: 21.0
+      smooth_path: True
+      smoother:
+        max_iterations: 1000
+        w_smoth: 0.3
+        w_data: 0.2
+        tolerance: 0.004
+        do_refinement: true
+
+    ###########################################################################
+    #   Smac Reeds-Shepp — RS 曲率最优轨迹
+    #   你之前说过使用 RS，这里完整开启
+    ###########################################################################
+    SmacRS:
+      plugin: "nav2_smac_planner/SmacPlannerLattice"
+      allow_unknown: true
+      use_quasi_sharp_turning: false
+
+      # RS 参数
+      analytic_expansion: true
+      minimum_turning_radius: 5.0
+      motion_model_for_search: "REEDS_SHEPP"
+
+      lookup_table_size: 5.0
+      reverse_penalty: 1.0
+      change_penalty: 1.0
+      non_straight_penalty: 1.0
+      cost_penalty: 2.0
+
+      # lattice表，有默认值，不用填
+      primitive_filename: ""
+
+###############################################################################
+#                           CONTROLLER SERVER
+###############################################################################
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    expected_controller_frequency: 10.0
+
+    progress_checker_plugin: "progress_checker"
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+
+    #Configure of Goal checker
+    goal_checker_plugins: [ "general_goal_checker" ]
+    current_goal_checker: "general_goal_checker"
+    general_goal_checker:
+      stateful: true
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.5 #meters
+      yaw_goal_tolerance: 0.2 #rad
+
+    controller_plugins: [ "FollowPath" ]
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      use_sim_time: true
+      desired_linear_vel: 0.8
+      max_linear_vel: 1.0
+      min_linear_velocity: 0.05
+
+      # 关键修改：允许平移误差，禁止在目标点处为了对准 yaw 而原地转
+      use_rotate_to_heading: false
+      rotate_to_heading_angular_vel: 0.4
+      allow_reversing: true # 必须开启，配合 Planner 的倒车路径
+      min_approach_linear_velocity: 0.05
+
+      max_allowed_time_to_collision_ahead: 1.0
+
+      # 增加前瞻，让转向更平缓，不切内圈
+      lookahead_dist: 5.0
+      min_lookahead_dist: 0.1
+      lookahead_time: 1.0
+
+      # 限制加速度，保护重型减速机
+      max_linear_accel: 0.2
+      max_linear_decel: 0.2
+      max_angular_accel: 0.15 # 限制转向猛拉
+
+      # 速度调节
+      use_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 1.0 # 半径小于2米时开始减速
+      regulated_linear_scaling_min_speed: 0.1
+
+      # 靠近障碍物减速
+      use_cost_regulated_linear_velocity_scaling: true
+      cost_scaling_dist: 0.5
+      inflation_cost_scaling_factor: 3.0
+
+###############################################################################
+#                         Behavior Tree Navigator
+###############################################################################
+bt_navigator:
+  ros__parameters:
+    use_sim_time: true
+    # bt_xml_filename: "/home/ruhanguo/anew_autowalk_v3/install/bringup/share/bringup/config/nav2/bt/walking.xml"
+    default_bt_xml_filename: "/home/ruhanguo/anew_autowalk_v3/bringup/config/nav2/bt/walking.xml"
+    default_nav_through_poses_bt_xml: "/home/ruhanguo/anew_autowalk_v3/bringup/config/nav2/bt/walking.xml"
+    # 增加插件声明，防止它去找 spin节点失败
+    # plugin_lib_names:
+    # - nav2_back_up_action_bt_node
+    # - nav2_wait_action_bt_node
+    # - nav2_clear_costmap_service_bt_node
+    # - nav2_compute_path_to_pose_action_bt_node
+    # - nav2_follow_path_action_bt_node
+    # - nav2_pipeline_sequence_bt_node
+    # - nav2_recovery_node_bt_node
+    # - nav2_rate_controller_bt_node
+    # - nav2_goal_updated_condition_bt_node
+    # - nav2_reactive_fallback_bt_node # 补上这个，对应 <ReactiveFallback>
+    # - nav2_bt_conversions_bt_node # 补上这个，基础转换
+    expected_bt_tick_period: 0.05 # 20Hz，可以调大一些
+
+###############################################################################
+#                           RECOVERY SERVER
+#     ###############################################################################
+behavior_server:
+  ros__parameters:
+    use_sim_time: true
+
+    # global_costmap_topic: global_costmap/costmap_raw
+    # footprint_topic: local_costmap/published_footprint
+    # 恢复插件配置
+
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    cycle_frequency: 10.0
+    # behavior_plugins: [ "backup", "wait" ] # 必须包含这两个
+    # backup:
+    #   plugin: "nav2_behaviors/BackUp"
+    # wait:
+    #   plugin: "nav2_behaviors/Wait"
+    # 注意：ClearEntireCostmap 是内置服务，通常不需要在这里声明插件
+
+    ###############################################################################
+    #                     LIFE CYCLE MANAGER
+    ###############################################################################
+lifecycle_manager:
+  ros__parameters:
+    autostart: true
+    use_sim_time: true
+    node_names: [ "map_server", "planner_server", "controller_server", "bt_navigator", "behavior_server" ]

@@ -1,0 +1,9 @@
+image: map.png
+resolution: 0.05
+origin:
+- 0
+- 0
+- 0
+negate: 0 # 黑色/灰色 = 占据，白色 = 空闲
+occupied_thresh: 0.4 # 灰色 128/255 ≈ 0.502，设置略低于此值，灰色也算占据
+free_thresh: 0.2 # 白色 > 0.196 被当作可通行

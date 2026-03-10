@@ -1,0 +1,9 @@
+# 请求（空）
+---
+# 响应 (包含所有感知结果)
+geometry_msgs/Pose truck_pose                   # 矿卡在base_link坐标系下的位姿
+float64 material_volume                         # 车斗内物料体积 (单位：立方米)
+geometry_msgs/Point material_highest_point      # 物料最高点坐标（相对于矿卡坐标系，即上一斗卸料点）
+float64 repose_angle                            # 物料安息角（单位:弧度）
+bool issuccess                                  # 感知结果状态（true表示成功，false表示失败）
+string message                                  # 状态描述信息

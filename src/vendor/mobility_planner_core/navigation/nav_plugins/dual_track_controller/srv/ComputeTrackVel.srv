@@ -1,0 +1,8 @@
+# 输入：规划器分解出的轨迹的一段  
+float64 linear_vel
+float64 angular_vel
+
+---
+# 输出：左右履带速度  
+float64 left_vel
+float64 right_vel

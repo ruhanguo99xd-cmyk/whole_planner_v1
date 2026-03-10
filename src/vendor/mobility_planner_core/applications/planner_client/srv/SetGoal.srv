@@ -1,0 +1,10 @@
+# 输入：用户在界面指定的目标点  
+float64 x
+float64 y
+float64 yaw
+
+geometry_msgs/PoseStamped goal
+---
+bool success
+string message
+geometry_msgs/PoseStamped[] path

@@ -1,0 +1,15 @@
+# Goal：启动挖掘
+bool start
+
+---
+# Result：挖掘结束结果
+uint8 SUCCESS=0    # 挖掘正常完成
+uint8 CANCELED=1   # 挖掘被cancel停止
+uint8 FAILED=2     # 执行失败（PLC/异常）
+
+uint8 code
+string message
+
+---
+# Feedback：占位（暂时不用反馈）
+uint8 dummy

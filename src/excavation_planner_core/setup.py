@@ -21,6 +21,7 @@ setup(
         'console_scripts': [
             'excavation_action_server = excavation_planner_core.action_server:main',
             'mock_pointcloud_server = excavation_planner_core.mock_pointcloud_server:main',
+            'legacy_perception_notifier = excavation_planner_core.legacy_perception_notifier:main',
         ],
     },
 )

@@ -13,6 +13,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('launch_mock_nav2', default_value='true'),
         DeclareLaunchArgument('launch_mock_pointcloud', default_value='true'),
+        DeclareLaunchArgument('launch_legacy_walk', default_value='true'),
+        DeclareLaunchArgument('launch_legacy_dig', default_value='true'),
+        DeclareLaunchArgument('launch_legacy_dig_planner', default_value='false'),
         Node(
             package='plc_adapter',
             executable='plc_adapter_node',
@@ -52,7 +55,35 @@ def generate_launch_description():
             package='excavation_planner_core',
             executable='mock_pointcloud_server',
             name='mock_pointcloud_server',
-            condition=IfCondition(LaunchConfiguration('launch_mock_pointcloud')),
+            condition=IfCondition(LaunchConfiguration('launch_legacy_dig_planner')),
+            output='screen',
+        ),
+        Node(
+            package='excavation_planner_core',
+            executable='legacy_perception_notifier',
+            name='legacy_perception_notifier',
+            condition=IfCondition(LaunchConfiguration('launch_legacy_dig')),
+            output='screen',
+        ),
+        Node(
+            package='autonomous_walk',
+            executable='autonomous_walk_node',
+            name='autonomous_walk',
+            condition=IfCondition(LaunchConfiguration('launch_legacy_walk')),
+            output='screen',
+        ),
+        Node(
+            package='tra_planning',
+            executable='trajectory_planner',
+            name='trajectory_planner',
+            condition=IfCondition(LaunchConfiguration('launch_legacy_dig_planner')),
+            output='screen',
+        ),
+        Node(
+            package='plc_control',
+            executable='plc_control_test1',
+            name='plc_control',
+            condition=IfCondition(LaunchConfiguration('launch_legacy_dig')),
             output='screen',
         ),
     ])

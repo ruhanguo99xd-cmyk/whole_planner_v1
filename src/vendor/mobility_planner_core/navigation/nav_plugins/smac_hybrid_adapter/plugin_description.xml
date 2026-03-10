@@ -1,0 +1,5 @@
+<library path="libsmac_hybrid_adapter">
+  <class type="smac_hybrid_adapter::SmacHybridAdapter" base_class_type="nav2_core::GlobalPlanner">
+    <description>SMAC Hybrid Adapter Planner</description>
+  </class>
+</library>

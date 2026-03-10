@@ -1,0 +1,16 @@
+autonomous_walk:
+  ros__parameters:
+    # Goal tolerance in meters
+    goal_tolerance: 0.2
+    
+    # Whether to use planner client service or direct action call
+    use_planner_client: false
+    
+    # Navigation action name
+    navigate_action_name: "navigate_to_pose"
+    
+    # Odometry topic name
+    odom_topic: "odom"
+    
+    # Logging verbosity
+    log_level: info

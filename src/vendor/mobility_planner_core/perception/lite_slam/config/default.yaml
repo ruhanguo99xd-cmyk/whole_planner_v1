@@ -1,0 +1,61 @@
+project:
+  name: lite_slam
+  frame_id: map
+  robot_frame_id: shovel_center_ground   # 回转中心地面投影坐标系
+  axis_convention: x_forward_y_left_z_up
+
+lidar:
+  vendor: hesai
+  model: QT128
+  source: sdk   # sdk | pcap | mock
+  # ===== 现场必改 =====
+  host: 192.168.1.201          # QT128 IP（示例）
+  port: 2368                   # QT128 数据端口（示例）
+  scan_hz: 10.0
+
+encoder:
+  source: plc
+  protocol: s7                 # s7 | modbus_tcp（按现场改）
+  use_snap7: true
+  # ===== 现场必改 =====
+  endpoint: 192.168.1.10       # PLC IP（示例）
+  rack: 0
+  slot: 1
+  db_address: "db9999.9999"   # 兼容 db9999.9999 / DB151.DBD12
+  read_size_bytes: 4
+  signed_ticks: false
+  resolution_ticks_per_rev: 16384
+  invert_direction: false
+  sample_hz: 1000.0
+
+extrinsic:
+  # T_center_lidar（雷达到回转中心）: 初值，后续通过离线标定优化
+  tx: 0.80
+  ty: -0.25
+  tz: 2.10
+  roll: 0.0
+  pitch: 0.0
+  yaw: 0.0
+
+preprocess:
+  # 地面与噪声过滤参数（v1）
+  z_min_m: -0.30
+  z_max_m: 0.50
+  range_min_m: 1.0
+  range_max_m: 80.0
+
+mapping:
+  resolution_m: 0.05
+  width_cells: 1200
+  height_cells: 1200
+  origin_xy_m: [-30.0, -30.0]
+  logodds_hit: 0.85
+  logodds_miss: -0.4
+  logodds_min: -4.0
+  logodds_max: 4.0
+  occupied_threshold: 0.65
+
+runtime:
+  publish_period_ms: 200
+  use_ros2_bridge: false
+  save_map_dir: "./output"

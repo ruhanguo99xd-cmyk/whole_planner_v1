@@ -62,6 +62,7 @@ class MissionDispatcherNode(Node):
         self.next_phase: Optional[str] = None
         self.active_phase: Optional[str] = None
         self.active_goal_handle = None
+        self.goal_request_in_flight = False
         self.active_goal_started_at = 0.0
         self.active_goal_timeout = 0.0
         self.retry_count = {'walk': 0, 'dig': 0}
@@ -146,7 +147,7 @@ class MissionDispatcherNode(Node):
             auto_enabled=self.auto_enabled,
             mission_present=self.current_mission is not None,
             next_phase=self.next_phase,
-            active_goal=self.active_goal_handle is not None,
+            active_goal=self.active_goal_handle is not None or self.goal_request_in_flight,
         )
         decision = self.state_machine.decide(context, plc)
         self._apply_decision(decision)
@@ -162,6 +163,8 @@ class MissionDispatcherNode(Node):
     def _send_walk_goal(self) -> None:
         if self.current_mission is None:
             return
+        if self.goal_request_in_flight:
+            return
         if not self.walk_client.wait_for_server(timeout_sec=0.2):
             self.get_logger().warning('Walk action server unavailable')
             return
@@ -171,11 +174,14 @@ class MissionDispatcherNode(Node):
         goal.constraints_json = self.current_mission.walk_constraints_json
         goal.priority = self.current_mission.priority
         goal.timeout_sec = float(self.walk_timeout_sec)
+        self.goal_request_in_flight = True
         future = self.walk_client.send_goal_async(goal, feedback_callback=self._on_walk_feedback)
         future.add_done_callback(self._on_walk_goal_response)
 
     def _send_dig_goal(self) -> None:
         if self.current_mission is None:
+            return
+        if self.goal_request_in_flight:
             return
         if not self.dig_client.wait_for_server(timeout_sec=0.2):
             self.get_logger().warning('Dig action server unavailable')
@@ -187,10 +193,12 @@ class MissionDispatcherNode(Node):
         goal.safety_boundary_json = '{}'
         goal.priority = self.current_mission.priority
         goal.timeout_sec = float(self.dig_timeout_sec)
+        self.goal_request_in_flight = True
         future = self.dig_client.send_goal_async(goal, feedback_callback=self._on_dig_feedback)
         future.add_done_callback(self._on_dig_goal_response)
 
     def _on_walk_goal_response(self, future) -> None:
+        self.goal_request_in_flight = False
         goal_handle = future.result()
         if not goal_handle.accepted:
             self._handle_action_failure('walk', ERROR_FAILED, 'walk goal rejected', retryable=False)
@@ -203,6 +211,7 @@ class MissionDispatcherNode(Node):
         goal_handle.get_result_async().add_done_callback(self._on_walk_result)
 
     def _on_dig_goal_response(self, future) -> None:
+        self.goal_request_in_flight = False
         goal_handle = future.result()
         if not goal_handle.accepted:
             self._handle_action_failure('dig', ERROR_FAILED, 'dig goal rejected', retryable=False)
@@ -281,6 +290,7 @@ class MissionDispatcherNode(Node):
         self.active_phase = None
         self.active_goal_started_at = 0.0
         self.active_goal_timeout = 0.0
+        self.goal_request_in_flight = False
         self.get_logger().info(f'Active goal cleared: {reason}')
 
     def _active_goal_timed_out(self) -> bool:

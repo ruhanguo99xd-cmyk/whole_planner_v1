@@ -1,0 +1,6 @@
+# 请求（空）
+---
+# 响应
+bool issuccess  # 是否成功
+float64[28] prs_coefficients  # PRS数组
+float64[6] bounding_boxes   # 有效范围（x_min, x_max, y_min, y_max, z_min, z_max）

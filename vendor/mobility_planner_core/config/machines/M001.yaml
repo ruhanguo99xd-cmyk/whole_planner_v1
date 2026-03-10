@@ -1,0 +1,37 @@
+model_id: M001
+description: 铲装机器人机型1
+
+lidar:
+  host: 192.168.10.1
+  port: 2368
+
+encoder:
+  endpoint: 192.168.20.1
+  db_address: "db9999.9999"
+  sample_hz: 1000.0
+  resolution_ticks_per_rev: 16384
+
+extrinsic:
+  tx: 0.80
+  ty: -0.25
+  tz: 2.10
+  roll: 0.0
+  pitch: 0.0
+  yaw: 0.0
+
+mapping:
+  resolution_m: 0.05
+  width_cells: 1200
+  height_cells: 1200
+  origin_xy_m: [-30.0, -30.0]
+
+control:
+  wheel_base: 2.0
+  max_speed: 1.0
+
+rtk:
+  host: 192.168.2.136
+  port: 9904
+  origin_lat: 37.758417
+  origin_lon: 112.593225
+  origin_alt: 762.368099
