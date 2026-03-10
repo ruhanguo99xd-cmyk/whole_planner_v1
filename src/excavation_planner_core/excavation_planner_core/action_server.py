@@ -1,20 +1,38 @@
-import importlib
+import threading
 import time
+from typing import Optional
 
 import rclpy
 from integrated_mission_interfaces.action import DigMission
 from integrated_mission_interfaces.msg import SubsystemStatus
-from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from excavation_planner_core.mock_runtime import resolve_mock_behavior
 
+COMMAND_START = 1
+COMMAND_STOP = 2
+
+ERROR_BUSY = 1
 ERROR_BACKEND_UNAVAILABLE = 2
-ERROR_TIMEOUT = 3
-ERROR_CANCELED = 4
 ERROR_BACKEND_FAILED = 5
+
+_STATUS_PROGRESS = {
+    'idle': 0.0,
+    'starting': 0.05,
+    'waiting_perception': 0.2,
+    'rotating_scan': 0.15,
+    'resetting': 0.4,
+    'digging': 0.7,
+    'completed': 1.0,
+    'stopping': 0.1,
+    'stopped': 0.0,
+    'failed': 1.0,
+}
 
 
 class ExcavationActionServer(Node):
@@ -23,11 +41,27 @@ class ExcavationActionServer(Node):
         self.callback_group = ReentrantCallbackGroup()
         self.declare_parameter('backend', 'mock')
         self.declare_parameter('mock_duration_sec', 5.0)
-        self.declare_parameter('legacy_action_name', '/dig')
+        self.declare_parameter('legacy_start_service_name', '/dig/start')
+        self.declare_parameter('legacy_stop_service_name', '/dig/stop')
+        self.declare_parameter('legacy_status_topic', '/dig/status')
         self.backend = str(self.get_parameter('backend').value)
         self.mock_duration_sec = float(self.get_parameter('mock_duration_sec').value)
-        self.legacy_action_name = str(self.get_parameter('legacy_action_name').value)
+        self.legacy_start_service_name = str(self.get_parameter('legacy_start_service_name').value)
+        self.legacy_stop_service_name = str(self.get_parameter('legacy_stop_service_name').value)
+        self.legacy_status_topic = str(self.get_parameter('legacy_status_topic').value)
+
         self.status_pub = self.create_publisher(SubsystemStatus, '/excavation/status', 10)
+        self.create_subscription(String, self.legacy_status_topic, self._on_legacy_status, 10)
+        self._legacy_start_client = self.create_client(Trigger, self.legacy_start_service_name, callback_group=self.callback_group)
+        self._legacy_stop_client = self.create_client(Trigger, self.legacy_stop_service_name, callback_group=self.callback_group)
+
+        self.current_mission_id = ''
+        self.current_phase = 'idle'
+        self.current_error_code = 0
+        self.lock = threading.Lock()
+        self.cancel_event = threading.Event()
+        self.worker_thread: Optional[threading.Thread] = None
+
         self.action_server = ActionServer(
             self,
             DigMission,
@@ -37,120 +71,215 @@ class ExcavationActionServer(Node):
             cancel_callback=self.cancel_callback,
             callback_group=self.callback_group,
         )
+        self._publish_status('idle', active=False, ready=True, error=False, detail='ready', mission_id='')
         self.get_logger().info(f'excavation_planner_core started: backend={self.backend}')
 
     def goal_callback(self, goal_request) -> GoalResponse:
-        if goal_request.timeout_sec <= 0.0:
+        if goal_request.command not in (COMMAND_START, COMMAND_STOP):
+            return GoalResponse.REJECT
+        if goal_request.command == COMMAND_START and goal_request.timeout_sec <= 0.0:
             return GoalResponse.REJECT
         return GoalResponse.ACCEPT
 
     def cancel_callback(self, goal_handle) -> CancelResponse:
         del goal_handle
-        return CancelResponse.ACCEPT
+        return CancelResponse.REJECT
 
     def execute_callback(self, goal_handle):
         goal = goal_handle.request
-        self._publish_status(True, False, False, 'starting', goal.mission_id)
-        if self.backend == 'mock':
-            result = self._execute_mock(goal_handle, goal)
-        elif self.backend == 'legacy_dig_action':
-            result = self._execute_legacy(goal_handle, goal)
+        if goal.command == COMMAND_START:
+            result = self._handle_start(goal)
+        else:
+            result = self._handle_stop(goal)
+        if result.accepted:
+            goal_handle.succeed()
         else:
             goal_handle.abort()
-            result = self._build_result(False, ERROR_BACKEND_UNAVAILABLE, f'unsupported backend: {self.backend}', False, 0.0)
-        self._publish_status(False, result.success, not result.success, 'finished' if result.success else 'failed', result.message, result.error_code)
         return result
 
-    def _execute_mock(self, goal_handle, goal) -> DigMission.Result:
+    def _handle_start(self, goal) -> DigMission.Result:
+        with self.lock:
+            if self._is_busy_locked():
+                return self._build_result(False, ERROR_BUSY, 'excavation busy')
+            self.current_mission_id = goal.mission_id
+            self.current_phase = 'starting'
+            self.current_error_code = 0
+
+        if self.backend == 'mock':
+            accepted, message, error_code = self._start_mock(goal)
+        elif self.backend == 'legacy_dig_command':
+            accepted, message, error_code = self._start_legacy()
+        else:
+            accepted, message, error_code = False, f'unsupported backend: {self.backend}', ERROR_BACKEND_UNAVAILABLE
+
+        if accepted:
+            return self._build_result(True, 0, 'received')
+
+        with self.lock:
+            self.current_mission_id = ''
+            self.current_phase = 'idle'
+            self.current_error_code = error_code
+        self._publish_status('failed', active=False, ready=False, error=True, detail=message, error_code=error_code)
+        return self._build_result(False, error_code, message)
+
+    def _handle_stop(self, goal) -> DigMission.Result:
+        del goal
+        if self.backend == 'mock':
+            accepted, message, error_code = self._stop_mock()
+        elif self.backend == 'legacy_dig_command':
+            accepted, message, error_code = self._stop_legacy()
+        else:
+            accepted, message, error_code = False, f'unsupported backend: {self.backend}', ERROR_BACKEND_UNAVAILABLE
+
+        if accepted:
+            return self._build_result(True, 0, 'received')
+        return self._build_result(False, error_code, message)
+
+    def _start_mock(self, goal) -> tuple[bool, str, int]:
         behavior = resolve_mock_behavior(goal.process_parameters_json, self.mock_duration_sec)
+        self.cancel_event = threading.Event()
+        self.worker_thread = threading.Thread(
+            target=self._run_mock_worker,
+            args=(goal.mission_id, behavior.outcome, behavior.duration_sec),
+            daemon=True,
+        )
+        self.worker_thread.start()
+        return True, 'received', 0
+
+    def _run_mock_worker(self, mission_id: str, outcome: str, duration_sec: float) -> None:
         start = time.monotonic()
-        while True:
+        self._publish_status('starting', active=True, ready=False, error=False, detail='mock dig started', mission_id=mission_id)
+        while not self.cancel_event.is_set():
             elapsed = time.monotonic() - start
-            feedback = DigMission.Feedback()
-            feedback.phase = 'digging'
-            feedback.progress = min(elapsed / max(behavior.duration_sec, 0.1), 0.99)
-            goal_handle.publish_feedback(feedback)
-            if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                return self._build_result(False, ERROR_CANCELED, 'dig canceled', True, 0.0)
-            if behavior.outcome == 'timeout' and elapsed > goal.timeout_sec:
-                goal_handle.abort()
-                return self._build_result(False, ERROR_TIMEOUT, 'dig mock timeout', True, 0.0)
-            if elapsed >= behavior.duration_sec:
+            if outcome == 'timeout' and elapsed >= duration_sec:
+                self._publish_status('digging', active=True, ready=False, error=False, detail='mock dig waiting', progress=0.95, mission_id=mission_id)
+                time.sleep(0.2)
+                continue
+            if elapsed >= duration_sec:
                 break
+            progress = min(elapsed / max(duration_sec, 0.1), 0.95)
+            self._publish_status('digging', active=True, ready=False, error=False, detail='mock dig running', progress=progress, mission_id=mission_id)
             time.sleep(0.2)
-        if behavior.outcome == 'fail':
-            goal_handle.abort()
-            return self._build_result(False, ERROR_BACKEND_FAILED, 'dig mock failure', True, behavior.material_volume)
-        goal_handle.succeed()
-        return self._build_result(True, 0, 'dig mock success', False, behavior.material_volume)
+        if self.cancel_event.is_set():
+            self._publish_status('stopped', active=False, ready=True, error=False, detail='mock dig stopped', mission_id=mission_id, clear_mission=True)
+            return
+        if outcome == 'fail':
+            self._publish_status('failed', active=False, ready=False, error=True, detail='mock dig failed', error_code=ERROR_BACKEND_FAILED, mission_id=mission_id)
+            return
+        self._publish_status('completed', active=False, ready=True, error=False, detail='mock dig completed', progress=1.0, mission_id=mission_id)
 
-    def _execute_legacy(self, goal_handle, goal) -> DigMission.Result:
-        try:
-            action_module = importlib.import_module('shovel_interfaces.action')
-            dig_action = action_module.Dig
-        except ImportError as exc:
-            goal_handle.abort()
-            return self._build_result(False, ERROR_BACKEND_UNAVAILABLE, f'shovel_interfaces unavailable: {exc}', True, 0.0)
-        client = ActionClient(self, dig_action, self.legacy_action_name, callback_group=self.callback_group)
-        if not client.wait_for_server(timeout_sec=5.0):
-            goal_handle.abort()
-            return self._build_result(False, ERROR_BACKEND_UNAVAILABLE, 'legacy dig action unavailable', True, 0.0)
-        legacy_goal = dig_action.Goal()
-        legacy_goal.start = True
-        send_future = client.send_goal_async(legacy_goal)
-        while not send_future.done():
-            if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                return self._build_result(False, ERROR_CANCELED, 'dig canceled before dispatch', True, 0.0)
-            time.sleep(0.1)
-        legacy_goal_handle = send_future.result()
-        if not legacy_goal_handle.accepted:
-            goal_handle.abort()
-            return self._build_result(False, ERROR_BACKEND_FAILED, 'legacy dig rejected', True, 0.0)
-        result_future = legacy_goal_handle.get_result_async()
-        start = time.monotonic()
-        while not result_future.done():
-            if goal_handle.is_cancel_requested:
-                legacy_goal_handle.cancel_goal_async()
-                goal_handle.canceled()
-                return self._build_result(False, ERROR_CANCELED, 'dig canceled during legacy execution', True, 0.0)
-            if time.monotonic() - start > goal.timeout_sec:
-                legacy_goal_handle.cancel_goal_async()
-                goal_handle.abort()
-                return self._build_result(False, ERROR_TIMEOUT, 'legacy dig timeout', True, 0.0)
-            feedback = DigMission.Feedback()
-            feedback.phase = 'legacy_digging'
-            feedback.progress = min((time.monotonic() - start) / max(goal.timeout_sec, 0.1), 0.95)
-            goal_handle.publish_feedback(feedback)
-            time.sleep(0.2)
-        wrapped = result_future.result()
-        result = wrapped.result
-        if getattr(result, 'code', 2) == 0:
-            goal_handle.succeed()
-            return self._build_result(True, 0, getattr(result, 'message', 'legacy dig success'), False, 0.0)
-        goal_handle.abort()
-        return self._build_result(False, ERROR_BACKEND_FAILED, getattr(result, 'message', 'legacy dig failure'), True, 0.0)
+    def _start_legacy(self) -> tuple[bool, str, int]:
+        if not self._legacy_start_client.wait_for_service(timeout_sec=5.0):
+            return False, 'legacy dig start service unavailable', ERROR_BACKEND_UNAVAILABLE
+        future = self._legacy_start_client.call_async(Trigger.Request())
+        while not future.done():
+            time.sleep(0.05)
+        response = future.result()
+        if not response.success:
+            return False, response.message or 'legacy dig rejected', ERROR_BACKEND_FAILED
+        self._publish_status('starting', active=True, ready=False, error=False, detail='legacy dig accepted')
+        return True, 'received', 0
 
-    def _publish_status(self, active: bool, ready: bool, error: bool, phase: str, detail: str, error_code: int = 0) -> None:
+    def _stop_mock(self) -> tuple[bool, str, int]:
+        self.cancel_event.set()
+        with self.lock:
+            mission_id = self.current_mission_id
+            running = self.worker_thread is not None and self.worker_thread.is_alive()
+        if running:
+            self._publish_status('stopping', active=True, ready=False, error=False, detail='mock dig stopping', mission_id=mission_id)
+        else:
+            self._publish_status('idle', active=False, ready=True, error=False, detail='mock dig idle', mission_id=mission_id, clear_mission=True)
+        return True, 'received', 0
+
+    def _stop_legacy(self) -> tuple[bool, str, int]:
+        mission_id = self.current_mission_id
+        if not mission_id:
+            self._publish_status('idle', active=False, ready=True, error=False, detail='dig idle', mission_id='', clear_mission=True)
+            return True, 'received', 0
+        self._publish_status('stopping', active=True, ready=False, error=False, detail='legacy dig stopping', mission_id=mission_id)
+        if not self._legacy_stop_client.wait_for_service(timeout_sec=2.0):
+            return False, 'legacy dig stop service unavailable', ERROR_BACKEND_UNAVAILABLE
+        future = self._legacy_stop_client.call_async(Trigger.Request())
+        while not future.done():
+            time.sleep(0.05)
+        response = future.result()
+        if not response.success:
+            return False, response.message or 'legacy dig stop rejected', ERROR_BACKEND_FAILED
+        return True, 'received', 0
+
+    def _on_legacy_status(self, msg: String) -> None:
+        status = msg.data.strip().lower()
+        phase_map = {
+            'idle': ('idle', False, True, False),
+            'starting': ('starting', True, False, False),
+            'rotating_scan': ('rotating_scan', True, False, False),
+            'waiting_perception': ('waiting_perception', True, False, False),
+            'resetting': ('resetting', True, False, False),
+            'digging': ('digging', True, False, False),
+            'completed': ('completed', False, True, False),
+            'stopping': ('stopping', True, False, False),
+            'stopped': ('stopped', False, True, False),
+            'failed': ('failed', False, False, True),
+        }
+        phase, active, ready, error = phase_map.get(status, ('digging', True, False, False))
+        error_code = ERROR_BACKEND_FAILED if error else 0
+        clear_mission = phase in {'idle', 'stopped'}
+        self._publish_status(
+            phase,
+            active=active,
+            ready=ready,
+            error=error,
+            detail=f'legacy dig status={status}',
+            error_code=error_code,
+            progress=_STATUS_PROGRESS.get(phase, 0.5),
+            clear_mission=clear_mission,
+        )
+
+    def _is_busy_locked(self) -> bool:
+        if self.current_mission_id == '':
+            return False
+        return self.current_phase not in {'idle', 'stopped'}
+
+    def _publish_status(
+        self,
+        phase: str,
+        *,
+        active: bool,
+        ready: bool,
+        error: bool,
+        detail: str,
+        error_code: int = 0,
+        progress: Optional[float] = None,
+        mission_id: Optional[str] = None,
+        clear_mission: bool = False,
+    ) -> None:
+        with self.lock:
+            mission_value = self.current_mission_id if mission_id is None else mission_id
+            self.current_phase = phase
+            self.current_error_code = error_code
         msg = SubsystemStatus()
+        msg.mission_id = mission_value
         msg.active = active
         msg.ready = ready
         msg.error = error
         msg.error_code = error_code
         msg.phase = phase
         msg.detail = detail
+        msg.progress = _STATUS_PROGRESS.get(phase, 0.0) if progress is None else float(progress)
         msg.stamp = self.get_clock().now().to_msg()
         self.status_pub.publish(msg)
+        if clear_mission:
+            with self.lock:
+                self.current_mission_id = ''
+                self.current_phase = 'idle'
+                self.current_error_code = 0
 
     @staticmethod
-    def _build_result(success: bool, error_code: int, message: str, retryable: bool, material_volume: float) -> DigMission.Result:
+    def _build_result(accepted: bool, error_code: int, message: str) -> DigMission.Result:
         result = DigMission.Result()
-        result.success = success
+        result.accepted = accepted
         result.error_code = error_code
         result.message = message
-        result.retryable = retryable
-        result.material_volume = material_volume
         return result
 
 
@@ -164,6 +293,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        node.cancel_event.set()
         executor.shutdown()
         node.destroy_node()
         try:

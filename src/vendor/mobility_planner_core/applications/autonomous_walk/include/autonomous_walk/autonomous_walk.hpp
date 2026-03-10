@@ -7,6 +7,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <planner_client/srv/set_goal.hpp>
 
 #include <memory>
@@ -84,6 +85,10 @@ namespace autonomous_walk
       const std::shared_ptr<planner_client::srv::SetGoal::Request> request,
       std::shared_ptr<planner_client::srv::SetGoal::Response> response);
 
+    void stop_walk_callback(
+      const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+
     void publish_status(const std::string & status);
     
     // Action client
@@ -94,6 +99,7 @@ namespace autonomous_walk
 
     // Service server
     rclcpp::Service<planner_client::srv::SetGoal>::SharedPtr set_goal_service_;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stop_walk_service_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
 
     // Subscriber

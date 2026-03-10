@@ -11,7 +11,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools','rclpy', 'std_msgs','snap7', 'numpy'],
+    install_requires=['setuptools', 'rclpy', 'std_msgs', 'std_srvs', 'numpy'],
     zip_safe=True,
     maintainer='pipixuan',
     maintainer_email='1531554489@qq.com',

@@ -21,6 +21,7 @@
   <depend>geometry_msgs</depend>
   <depend>action_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
 
   <!-- Planning -->
   <depend>planner_client</depend>

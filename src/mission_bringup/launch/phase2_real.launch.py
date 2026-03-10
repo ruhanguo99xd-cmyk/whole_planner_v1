@@ -34,7 +34,7 @@ def generate_launch_description():
             package='excavation_planner_core',
             executable='excavation_action_server',
             name='excavation_planner_core',
-            parameters=[{'backend': 'legacy_dig_action', 'mock_duration_sec': 4.0}],
+            parameters=[{'backend': 'legacy_dig_command', 'mock_duration_sec': 4.0}],
             output='screen',
         ),
         Node(

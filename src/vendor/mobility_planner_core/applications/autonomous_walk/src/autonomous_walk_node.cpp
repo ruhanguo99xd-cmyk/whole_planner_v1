@@ -51,6 +51,9 @@ bool autonomous_walk::AutonomousWalk::init()
   set_goal_service_ = this->create_service<planner_client::srv::SetGoal>(
     "autonomous_walk/set_goal",
     std::bind(&AutonomousWalk::set_goal_callback, this, std::placeholders::_1, std::placeholders::_2));
+  stop_walk_service_ = this->create_service<std_srvs::srv::Trigger>(
+    "autonomous_walk/stop",
+    std::bind(&AutonomousWalk::stop_walk_callback, this, std::placeholders::_1, std::placeholders::_2));
 
   status_pub_ = this->create_publisher<std_msgs::msg::String>("autonomous_walk/status", 10);
 
@@ -205,6 +208,16 @@ void AutonomousWalk::set_goal_callback(
   } else {
     response->message = "Failed to set goal";
   }
+}
+
+void AutonomousWalk::stop_walk_callback(
+  const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  (void)request;
+  stop_walk();
+  response->success = true;
+  response->message = "received";
 }
 
 void AutonomousWalk::publish_status(const std::string & status)

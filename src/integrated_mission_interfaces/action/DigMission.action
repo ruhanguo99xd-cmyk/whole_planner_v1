@@ -1,3 +1,7 @@
+uint8 START=1
+uint8 STOP=2
+
+uint8 command
 string mission_id
 string target_zone
 string process_parameters_json
@@ -5,11 +9,9 @@ string safety_boundary_json
 uint8 priority
 float32 timeout_sec
 ---
-bool success
+bool accepted
 uint16 error_code
 string message
-bool retryable
-float32 material_volume
 ---
 string phase
 float32 progress

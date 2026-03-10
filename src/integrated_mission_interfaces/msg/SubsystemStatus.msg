@@ -1,7 +1,9 @@
+string mission_id
 bool active
 bool ready
 bool error
 uint16 error_code
 string phase
 string detail
+float32 progress
 builtin_interfaces/Time stamp

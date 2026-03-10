@@ -19,6 +19,7 @@ find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(planner_client REQUIRED)
 
 # --- 2. 添加可执行文件 (必须在配置该 target 的属性之前) ---
@@ -40,6 +41,7 @@ ament_target_dependencies(autonomous_walk_node
   geometry_msgs
   action_msgs
   std_msgs
+  std_srvs
   planner_client
 )
 
