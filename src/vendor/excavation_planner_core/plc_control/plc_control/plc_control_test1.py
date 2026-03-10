@@ -148,12 +148,17 @@ def main():
 
     try:
         executor.spin()
+    except KeyboardInterrupt:
+        pass
     except Exception as e:
         node.get_logger().error(f"操作失败：{str(e)}")
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
         print("已销毁ROS2动作服务端节点")
 
 if __name__ == "__main__":
