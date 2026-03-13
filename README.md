@@ -252,6 +252,30 @@ ros2 run mission_dispatcher submit_demo_mission
 - [阶段变更记录](./docs/CHANGELOG_PHASED.md)
 - [开发分支与提交流程](./docs/DEVELOPMENT_WORKFLOW.md)
 
+## Roadmap / TODO
+
+### P0 稳定化
+
+- [ ] 用真实传感器外参与真实点云，再跑一轮 `PointCloud2 -> boundary -> target_pose` 在线验收
+- [ ] 继续补 dig cancel 在更底层后处理链的停止检查点，避免未来扩展后出现“上层停了，底层尾段还在算”
+- [ ] 把 dispatcher 当前较粗的 `TRANSITION` 状态继续拆细成更清晰的等待态和切换态
+- [ ] 把统一上位机纳入更完整的回归验收，而不只做单包 GUI 自测
+
+### P1 算法增强
+
+- [ ] 把真正的物料点云分割/边界提取前处理接入 `material_boundary_extractor`
+- [ ] 把停靠点规划继续按专利思路细化，增强对不同物料形态和边界退化场景的鲁棒性
+- [ ] 给 dig 结束后“下一次应该往哪里走”补正式接口，不再只回到 `IDLE` 等新目标
+- [ ] 继续把物料类型、机型参数、候选点评价权重做成更完整的参数体系
+
+### P2 上位机与交付
+
+- [ ] 给 GitHub 首页补统一上位机截图和实际运行效果图
+- [ ] 继续增强挖掘页优化过程可视化，让调试信息更容易用于联调和演示
+- [ ] 把更多测试并入统一 `colcon test` 回归链
+- [ ] 补齐更标准的发布/部署说明，让新机器落地更顺
+- [ ] 按阶段整理更干净的 feature 分支和 release 里程碑
+
 ## Git 分支约定
 
 - `master`
