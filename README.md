@@ -112,6 +112,87 @@ flowchart TB
     DORCH -.驱动.-> RET
 ```
 
+## 大规划状态机图
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+
+    IDLE --> WALK_PREP: submit_mission + machine_ready + safe_to_walk
+    IDLE --> TRANSITION: submit_mission but walk_not_ready
+    IDLE --> FAULT: plc_fault/manual_override
+
+    TRANSITION --> WALK_PREP: walk_ready
+    TRANSITION --> DIG_PREP: dig_ready
+    TRANSITION --> FAULT: plc_fault/manual_override
+
+    WALK_PREP --> WALKING: walk START ack(received)
+    WALK_PREP --> FAULT: walk_start_fail / plc_fault
+
+    WALKING --> TRANSITION: /mobility/status=completed and STOP ack
+    WALKING --> IDLE: walk canceled
+    WALKING --> FAULT: walk failed / plc_fault
+
+    DIG_PREP --> DIGGING: dig START ack(received)
+    DIG_PREP --> FAULT: dig_start_fail / plc_fault
+
+    DIGGING --> IDLE: /excavation/status=completed and STOP ack
+    DIGGING --> IDLE: dig canceled
+    DIGGING --> FAULT: dig failed / plc_fault
+
+    FAULT --> IDLE: recover
+```
+
+## 点云到停靠点的数据流图
+
+```mermaid
+flowchart LR
+    PC[PointCloud2] --> EXTRACTOR[material_boundary_extractor]
+
+    CFG1[boundary_input 配置\nz/roi/angular_bins/min_boundary_radius] --> EXTRACTOR
+    CFG2[静态外参\nxyz+rpy] --> EXTRACTOR
+
+    EXTRACTOR --> CHECK{cloud frame\n是否等于目标 frame?}
+    CHECK -- 是 --> FILTER[Z过滤 + ROI裁剪]
+    CHECK -- 否且有静态外参 --> TF[静态外参变换]
+    TF --> FILTER
+    CHECK -- 否且无外参 --> FAIL[直接失败]
+
+    FILTER --> BINS[角度分桶/边界抽取]
+    BINS --> OUTLINE[/mobility/extract_material_boundary\nboundary_outline]
+
+    OUTLINE --> MTP[material_target_planner]
+    MTP --> INPUT[geometry_input / resolved_outline]
+    INPUT --> BF[boundary_fit]
+    BF --> WB[work_band]
+    WB --> CE[candidate_evaluation]
+    CE --> TARGET[resolved_walk_target]
+
+    TARGET --> DISP[mission_dispatcher]
+    DISP --> WALK[/mobility/execute START]
+```
+
+## 当前验证结果
+
+最近一轮仓库内验证记录：
+
+- `scripts/build_phase2_minimal.sh`：通过
+- HMI 增量构建：`12 packages finished`
+- `mission_operator_hmi` 单测：`9 tests, 0 errors, 0 failures`
+- GUI 启动探针：通过
+- `phase2_real.launch.py -s` 启动解析：通过
+
+推荐自查命令：
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/build_phase2_minimal.sh
+colcon --log-base log_hmi_iter test --build-base build_hmi_iter --install-base install_hmi_iter --packages-select mission_operator_hmi
+colcon --log-base log_hmi_iter test-result --test-result-base build_hmi_iter --all --verbose
+source install_hmi_iter/setup.bash
+ros2 launch mission_bringup phase2_real.launch.py -s
+```
+
 ## 代码结构
 
 - `src/mission_dispatcher`
