@@ -321,6 +321,7 @@ bash scripts/clean_legacy_artifacts.sh --apply
 - [接口说明](./docs/INTERFACES.md)
 - [运行手册](./docs/RUNBOOK.md)
 - [系统综述与启动图](./docs/SYSTEM_OVERVIEW_AND_STARTUP.md)
+- [领导演示一页版](./docs/LEADERSHIP_DEMO_ONE_PAGER.md)
 - [阶段变更记录](./docs/CHANGELOG_PHASED.md)
 - [开发分支与提交流程](./docs/DEVELOPMENT_WORKFLOW.md)
 
