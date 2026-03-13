@@ -10,7 +10,9 @@ from tkinter import messagebox, scrolledtext, ttk
 from typing import Any
 
 import rclpy
+from rclpy.action import ActionClient
 from geometry_msgs.msg import Point, PoseStamped, PolygonStamped, Twist
+from integrated_mission_interfaces.action import DigMission, WalkMission
 from integrated_mission_interfaces.msg import PlannerMode, PlcSnapshot, SubsystemStatus
 from integrated_mission_interfaces.srv import SubmitMission
 from nav_msgs.msg import OccupancyGrid, Odometry, Path as RosPath
@@ -43,6 +45,10 @@ MODE_NAMES = {
     PlannerMode.TRANSITION: 'TRANSITION',
     PlannerMode.FAULT: 'FAULT',
 }
+
+COMMAND_START = 1
+COMMAND_STOP = 2
+COMMAND_CANCEL = 3
 
 
 @dataclass
@@ -105,6 +111,8 @@ class MissionOperatorBackend(Node):
         self.stop_cli = self.create_client(Trigger, '/mission_dispatcher/stop')
         self.recover_cli = self.create_client(Trigger, '/mission_dispatcher/recover')
         self.submit_cli = self.create_client(SubmitMission, '/mission_dispatcher/submit_mission')
+        self.walk_cli = ActionClient(self, WalkMission, '/mobility/execute')
+        self.dig_cli = ActionClient(self, DigMission, '/excavation/execute')
         self.goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
 
         transient_qos = QoSProfile(depth=1)
@@ -448,6 +456,98 @@ class MissionOperatorBackend(Node):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def request_manual_walk_start(
+        self,
+        *,
+        x_value: float,
+        y_value: float,
+        yaw_deg: float,
+        constraints_json: str,
+        mission_id: str,
+        priority: int,
+        timeout_sec: float = 20.0,
+    ) -> None:
+        goal = WalkMission.Goal()
+        goal.command = COMMAND_START
+        goal.mission_id = mission_id
+        goal.target_pose = self._make_pose(x_value, y_value, yaw_deg)
+        goal.constraints_json = constraints_json
+        goal.priority = int(priority)
+        goal.timeout_sec = float(timeout_sec)
+        self._request_action_goal(
+            label='手动切行走',
+            client=self.walk_cli,
+            goal=goal,
+            stop_dispatcher_first=True,
+        )
+
+    def request_manual_walk_cancel(
+        self,
+        *,
+        mission_id: str,
+        timeout_sec: float = 5.0,
+    ) -> None:
+        goal = WalkMission.Goal()
+        goal.command = COMMAND_CANCEL
+        goal.mission_id = mission_id
+        goal.target_pose.header.frame_id = 'map'
+        goal.constraints_json = '{}'
+        goal.priority = 1
+        goal.timeout_sec = float(timeout_sec)
+        self._request_action_goal(
+            label='停止行走',
+            client=self.walk_cli,
+            goal=goal,
+            stop_dispatcher_first=False,
+        )
+
+    def request_manual_dig_start(
+        self,
+        *,
+        mission_id: str,
+        target_zone: str,
+        process_parameters_json: str,
+        safety_boundary_json: str,
+        priority: int,
+        timeout_sec: float = 90.0,
+    ) -> None:
+        goal = DigMission.Goal()
+        goal.command = COMMAND_START
+        goal.mission_id = mission_id
+        goal.target_zone = target_zone
+        goal.process_parameters_json = process_parameters_json
+        goal.safety_boundary_json = safety_boundary_json
+        goal.priority = int(priority)
+        goal.timeout_sec = float(timeout_sec)
+        self._request_action_goal(
+            label='手动切挖掘',
+            client=self.dig_cli,
+            goal=goal,
+            stop_dispatcher_first=True,
+        )
+
+    def request_manual_dig_cancel(
+        self,
+        *,
+        mission_id: str,
+        target_zone: str,
+        timeout_sec: float = 10.0,
+    ) -> None:
+        goal = DigMission.Goal()
+        goal.command = COMMAND_CANCEL
+        goal.mission_id = mission_id
+        goal.target_zone = target_zone
+        goal.process_parameters_json = '{}'
+        goal.safety_boundary_json = '{}'
+        goal.priority = 1
+        goal.timeout_sec = float(timeout_sec)
+        self._request_action_goal(
+            label='停止挖掘',
+            client=self.dig_cli,
+            goal=goal,
+            stop_dispatcher_first=False,
+        )
+
     def submit_demo_mission(self) -> None:
         self.request_submit_mission(
             {
@@ -470,6 +570,70 @@ class MissionOperatorBackend(Node):
                 'priority': 1,
             }
         )
+
+    def _request_action_goal(
+        self,
+        *,
+        label: str,
+        client: Any,
+        goal: Any,
+        stop_dispatcher_first: bool,
+    ) -> None:
+        def worker() -> None:
+            if stop_dispatcher_first:
+                if not self.stop_cli.wait_for_service(timeout_sec=2.0):
+                    self._append_event('HMI', f'{label}失败：dispatcher stop service 不可用')
+                    return
+                stop_future = self.stop_cli.call_async(Trigger.Request())
+                deadline = time.monotonic() + 3.0
+                while not stop_future.done() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                if not stop_future.done():
+                    self._append_event('HMI', f'{label}失败：停止自动模式超时')
+                    return
+                try:
+                    stop_response = stop_future.result()
+                except Exception as exc:  # pragma: no cover
+                    self._append_event('HMI', f'{label}失败：停止自动模式异常 {exc}')
+                    return
+                if not stop_response.success:
+                    self._append_event('HMI', f'{label}失败：停止自动模式失败 {stop_response.message}')
+                    return
+                self._append_event('HMI', '已接管自动调度，进入手动子系统控制')
+
+            if not client.wait_for_server(timeout_sec=3.0):
+                self._append_event('HMI', f'{label}失败：action server 不可用')
+                return
+            send_future = client.send_goal_async(goal)
+            send_future.add_done_callback(lambda fut: self._on_action_goal_sent(label, fut))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_action_goal_sent(self, label: str, future: Any) -> None:
+        try:
+            goal_handle = future.result()
+        except Exception as exc:  # pragma: no cover
+            self._append_event('HMI', f'{label}失败：{exc}')
+            return
+        if not goal_handle.accepted:
+            self._append_event('HMI', f'{label}失败：goal 被拒绝')
+            return
+        self._append_event('HMI', f'{label}已发送，等待子系统确认')
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(lambda fut: self._on_action_result(label, fut))
+
+    def _on_action_result(self, label: str, future: Any) -> None:
+        try:
+            result_wrapper = future.result()
+        except Exception as exc:  # pragma: no cover
+            self._append_event('HMI', f'{label}失败：result 异常 {exc}')
+            return
+        result = result_wrapper.result
+        accepted = getattr(result, 'accepted', True)
+        message = getattr(result, 'message', '')
+        state = '成功' if accepted else '失败'
+        suffix = f'：{message}' if message else ''
+        self._append_event('HMI', f'{label}{state}{suffix}')
 
     def _build_submit_request(self, payload: dict[str, Any]) -> SubmitMission.Request:
         request = SubmitMission.Request()
@@ -632,6 +796,13 @@ class IntegratedOperatorHmi:
         ttk.Button(controls, text='恢复', command=self.backend.request_recover, style='Accent.TButton').pack(side='left', padx=(0, 8))
         ttk.Button(controls, text='提交示例任务', command=self.backend.submit_demo_mission, style='Accent.TButton').pack(side='left')
 
+        quick_nav = ttk.Frame(self.mission_tab, style='Card.TFrame')
+        quick_nav.pack(fill='x', pady=(10, 0))
+        ttk.Label(quick_nav, text='演示快捷切换', style='Section.TLabel').pack(side='left', padx=(0, 10))
+        ttk.Button(quick_nav, text='查看行走页', command=lambda: self.notebook.select(self.mobility_tab)).pack(side='left', padx=(0, 8))
+        ttk.Button(quick_nav, text='查看挖掘页', command=lambda: self.notebook.select(self.excavation_tab)).pack(side='left', padx=(0, 8))
+        ttk.Button(quick_nav, text='查看大规划页', command=lambda: self.notebook.select(self.mission_tab)).pack(side='left')
+
         form = ttk.Frame(self.mission_tab, style='Card.TFrame')
         form.pack(fill='both', expand=True, pady=(14, 0))
         form.columnconfigure(1, weight=1)
@@ -695,6 +866,10 @@ class IntegratedOperatorHmi:
         submit_row = ttk.Frame(form, style='Card.TFrame')
         submit_row.grid(row=row, column=0, columnspan=4, sticky='w', pady=(12, 0))
         ttk.Button(submit_row, text='提交当前表单任务', command=self._submit_form_mission, style='Accent.TButton').pack(side='left')
+        ttk.Button(submit_row, text='手动切行走', command=self._manual_switch_walk, style='Accent.TButton').pack(side='left', padx=(8, 0))
+        ttk.Button(submit_row, text='停止行走', command=self._manual_cancel_walk).pack(side='left', padx=(8, 0))
+        ttk.Button(submit_row, text='手动切挖掘', command=self._manual_switch_dig, style='Accent.TButton').pack(side='left', padx=(8, 0))
+        ttk.Button(submit_row, text='停止挖掘', command=self._manual_cancel_dig).pack(side='left', padx=(8, 0))
 
     def _build_mobility_tab(self) -> None:
         container = ttk.Frame(self.mobility_tab, style='Card.TFrame')
@@ -892,6 +1067,40 @@ class IntegratedOperatorHmi:
             float(self.goal_x_var.get()),
             float(self.goal_y_var.get()),
             float(self.goal_yaw_var.get()),
+        )
+
+    def _manual_switch_walk(self) -> None:
+        mission_id = self.mission_id_var.get().strip() or f'manual-walk-{int(time.time())}'
+        self.notebook.select(self.mobility_tab)
+        self.backend.request_manual_walk_start(
+            x_value=float(self.goal_x_var.get()),
+            y_value=float(self.goal_y_var.get()),
+            yaw_deg=float(self.goal_yaw_var.get()),
+            constraints_json=normalize_json_text(self.walk_constraints_text.get('1.0', 'end')),
+            mission_id=mission_id,
+            priority=int(self.priority_var.get()),
+        )
+
+    def _manual_cancel_walk(self) -> None:
+        mission_id = self.mission_id_var.get().strip() or 'manual-walk'
+        self.backend.request_manual_walk_cancel(mission_id=mission_id)
+
+    def _manual_switch_dig(self) -> None:
+        mission_id = self.mission_id_var.get().strip() or f'manual-dig-{int(time.time())}'
+        self.notebook.select(self.excavation_tab)
+        self.backend.request_manual_dig_start(
+            mission_id=mission_id,
+            target_zone=self.dig_target_zone_var.get().strip() or 'bench-A',
+            process_parameters_json=normalize_json_text(self.dig_parameters_text.get('1.0', 'end')),
+            safety_boundary_json='{}',
+            priority=int(self.priority_var.get()),
+        )
+
+    def _manual_cancel_dig(self) -> None:
+        mission_id = self.mission_id_var.get().strip() or 'manual-dig'
+        self.backend.request_manual_dig_cancel(
+            mission_id=mission_id,
+            target_zone=self.dig_target_zone_var.get().strip() or 'bench-A',
         )
 
     def _on_mobility_canvas_press(self, event: tk.Event) -> None:

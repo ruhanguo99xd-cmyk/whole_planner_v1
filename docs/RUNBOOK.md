@@ -119,11 +119,18 @@ bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 
 统一上位机当前提供：
 - `大规划` 页签：开始/停止/恢复、手动任务表单、示例任务提交、状态事件流
+- `大规划` 页签新增手动接管按钮：`手动切行走 / 停止行走 / 手动切挖掘 / 停止挖掘`
 - `行走规划` 页签：参考 `autowalk_hmi_qt`，接入 `map/global_costmap/local_costmap`、目标点、自动目标、物料边界、规划路径、状态灯、`cmd_vel` 与履带速度曲线，并支持地图点选目标
 - `挖掘规划` 页签：dig 阶段、回转角、`trajectory_planner` 三段实时轨迹、优化中间候选轨迹、推压/提升速度曲线、`load/return` 回转曲线
 
 ### 统一上位机交互提示
 
+- 手动接管按钮：
+  - `手动切行走`：先停止 dispatcher 自动调度，再直接向 walk action 发送 `START`
+  - `停止行走`：直接向 walk action 发送 `CANCEL`
+  - `手动切挖掘`：先停止 dispatcher 自动调度，再直接向 dig action 发送 `START`
+  - `停止挖掘`：直接向 dig action 发送 `CANCEL`
+  - 这组按钮适合演示切换和人工接管，不会篡改现有自动任务协议
 - 地图点选目标：
   - 进入 `行走规划` 页签
   - 勾选“点选目标模式”
@@ -320,6 +327,7 @@ bash scripts/run_profile.sh hmi
 4. 期望行为：
    - 可以在一个窗口里切换 `大规划 / 行走规划 / 挖掘规划`
    - `大规划` 页签能看到 `/mission_dispatcher/mode`、`/mobility/status`、`/excavation/status`、`/plc/status`
+   - `大规划` 页签能通过手动接管按钮直接切到行走或挖掘，并在事件流里看到 action `received`
    - `行走规划` 页签能显示 `map/global_costmap/local_costmap`、`/plan`、当前位置、目标点和履带速度曲线
    - `行走规划` 页签开启“点选目标模式”后，可以鼠标拖拽下发 `/goal_pose`
    - `挖掘规划` 页签能直接显示 `digging/debug/*` 实时轨迹、优化候选轨迹和平滑回转曲线

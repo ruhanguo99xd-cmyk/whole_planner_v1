@@ -367,6 +367,8 @@ bash scripts/run_profile.sh integrated launch_operator_hmi:=true
   - 恢复
   - 手动提交任务
   - 提交示例任务
+  - 手动切行走 / 停止行走
+  - 手动切挖掘 / 停止挖掘
 - `行走规划` 页签
   - 当前位姿
   - `map/global_costmap/local_costmap`
