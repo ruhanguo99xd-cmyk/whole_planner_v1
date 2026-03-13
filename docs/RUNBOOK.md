@@ -109,6 +109,15 @@ cd /home/ruhanguo/shovel_robot/whole_planner_v1
 bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 ```
 
+说明：
+- 推荐 launch 名称已经统一到：
+  - `mock.launch.py`
+  - `integrated.launch.py`
+- 旧的：
+  - `phase1_mock.launch.py`
+  - `phase2_real.launch.py`
+ 仍然保留为兼容入口
+
 统一上位机当前提供：
 - `大规划` 页签：开始/停止/恢复、手动任务表单、示例任务提交、状态事件流
 - `行走规划` 页签：参考 `autowalk_hmi_qt`，接入 `map/global_costmap/local_costmap`、目标点、自动目标、物料边界、规划路径、状态灯、`cmd_vel` 与履带速度曲线，并支持地图点选目标

@@ -83,7 +83,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    LAUNCH[phase2_real.launch.py] --> PLC[plc_adapter]
+    LAUNCH[integrated.launch.py] --> PLC[plc_adapter]
     LAUNCH --> DISP[mission_dispatcher]
     LAUNCH --> WACT[mobility_action_server]
     LAUNCH --> MTP[material_target_planner]
@@ -180,7 +180,7 @@ flowchart LR
 - HMI 增量构建：`12 packages finished`
 - `mission_operator_hmi` 单测：`9 tests, 0 errors, 0 failures`
 - GUI 启动探针：通过
-- `phase2_real.launch.py -s` 启动解析：通过
+- `integrated.launch.py -s` 启动解析：通过
 
 推荐自查命令：
 
@@ -190,7 +190,7 @@ bash scripts/build_workspace.sh
 colcon --log-base log_install_fix test --build-base build --install-base install --packages-select mission_operator_hmi
 colcon --log-base log_install_fix test-result --test-result-base build --all --verbose
 bash -lc 'source install/setup.bash'
-ros2 launch mission_bringup phase2_real.launch.py -s
+ros2 launch mission_bringup integrated.launch.py -s
 ```
 
 ## 代码结构

@@ -247,12 +247,12 @@ colcon --log-base log_pointcloud_ci build \
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
 source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py
+ros2 launch mission_bringup integrated.launch.py
 ```
 
 启动文件：
 
-- [phase2_real.launch.py](/home/ruhanguo/shovel_robot/whole_planner_v1/src/mission_bringup/launch/phase2_real.launch.py)
+- [integrated.launch.py](/home/ruhanguo/shovel_robot/whole_planner_v1/src/mission_bringup/launch/integrated.launch.py)
 
 默认会拉起：
 
@@ -291,7 +291,7 @@ ros2 launch mission_bringup phase2_real.launch.py \
 
 ### 10.5 点云 frame 不一致时，按机型加载静态外参
 
-`phase2_real.launch.py` 现在会自动读取：
+`integrated.launch.py` 现在会自动读取：
 
 - `config/perception/material_boundary_extrinsic/<machine_model>.yaml`
 - 如果机型文件不存在，则回退到 `config/perception/material_boundary_extrinsic/default.yaml`
@@ -503,7 +503,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    LAUNCH[phase2_real.launch.py] --> PLC[plc_adapter]
+    LAUNCH[integrated.launch.py] --> PLC[plc_adapter]
     LAUNCH --> DISP[mission_dispatcher]
     LAUNCH --> WACT[mobility_action_server]
     LAUNCH --> MTP[material_target_planner]

@@ -22,10 +22,10 @@ set -u
 
 case "$profile" in
   mock)
-    ros2 launch mission_bringup phase1_mock.launch.py "$@"
+    ros2 launch mission_bringup mock.launch.py "$@"
     ;;
   integrated)
-    ros2 launch mission_bringup phase2_real.launch.py "$@"
+    ros2 launch mission_bringup integrated.launch.py "$@"
     ;;
   hmi)
     ros2 run mission_operator_hmi integrated_operator_hmi "$@"
