@@ -9,6 +9,8 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)    # 用了std_msgs/Bool
 find_package(point_cloud_processing_pkg REQUIRED)
@@ -40,6 +42,8 @@ add_definitions(${PCL_DEFINITIONS})
 
 # 使用ment_target_dependencies链接ROS库
 ament_target_dependencies(trajectory_planner 
+    geometry_msgs
+    nav_msgs
     rclcpp
     std_msgs
     point_cloud_processing_pkg

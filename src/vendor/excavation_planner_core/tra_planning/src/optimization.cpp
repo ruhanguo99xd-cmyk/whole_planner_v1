@@ -10,8 +10,98 @@
 #include "parameters.h"
 #include "trajectory_to_VandF.h"
 #include "optimization.h"
+#include <chrono>
+#include <cmath>
+#include <limits>
+#include <mutex>
 
 extern int g_obj_choose;  
+
+namespace {
+std::atomic_bool* g_cancel_flag = nullptr;
+std::mutex g_optimizer_mutex;
+std::mutex g_debug_callback_mutex;
+nlopt_opt g_current_optimizer = nullptr;
+OptimizationDebugCallback g_debug_callback;
+std::chrono::steady_clock::time_point g_last_debug_publish;
+std::atomic_ulong g_eval_count{0};
+constexpr unsigned long kDebugEvalStride = 5;
+constexpr auto kDebugPublishInterval = std::chrono::milliseconds(120);
+}
+
+void set_optimization_cancel_flag(std::atomic_bool* cancel_flag)
+{
+	g_cancel_flag = cancel_flag;
+}
+
+bool optimization_cancel_requested()
+{
+	return g_cancel_flag != nullptr && g_cancel_flag->load();
+}
+
+void set_optimization_debug_callback(OptimizationDebugCallback callback)
+{
+	std::lock_guard<std::mutex> lock(g_debug_callback_mutex);
+	g_debug_callback = std::move(callback);
+}
+
+void clear_optimization_debug_callback()
+{
+	std::lock_guard<std::mutex> lock(g_debug_callback_mutex);
+	g_debug_callback = OptimizationDebugCallback();
+}
+
+namespace {
+void maybe_publish_optimization_debug(
+	const double* x,
+	void* excavator_position,
+	double objective_value,
+	double bucket_fill_rate,
+	double tf)
+{
+	if (optimization_cancel_requested() || x == nullptr || excavator_position == nullptr) {
+		return;
+	}
+	if (!std::isfinite(tf) || tf <= 0.0) {
+		return;
+	}
+	OptimizationDebugCallback callback;
+	{
+		std::lock_guard<std::mutex> lock(g_debug_callback_mutex);
+		callback = g_debug_callback;
+	}
+	if (!callback) {
+		return;
+	}
+
+	const unsigned long eval_count = ++g_eval_count;
+	const auto now = std::chrono::steady_clock::now();
+	bool should_publish = (eval_count == 1) || (eval_count % kDebugEvalStride == 0);
+	{
+		std::lock_guard<std::mutex> lock(g_debug_callback_mutex);
+		if (!should_publish && now - g_last_debug_publish < kDebugPublishInterval) {
+			return;
+		}
+		g_last_debug_publish = now;
+	}
+
+	try {
+		Eigen::ArrayXXd unused_time_axis;
+		Eigen::MatrixXd candidate_path = build_tip_trajectory_global(x, excavator_position, &unused_time_axis);
+		callback(candidate_path, objective_value, bucket_fill_rate, tf, eval_count);
+	} catch (...) {
+		// Debug publication must never interfere with optimization.
+	}
+}
+} // namespace
+
+void request_force_stop_current_optimizer()
+{
+	std::lock_guard<std::mutex> lock(g_optimizer_mutex);
+	if (g_current_optimizer != nullptr) {
+		nlopt_force_stop(g_current_optimizer);
+	}
+}
 
 // -------------------------------------opt---------------------------------------------------
 // 优化函数
@@ -22,6 +112,15 @@ void shove_optimization(unsigned n, double* x, double* grad, const double* lb, c
 	double cons_tol[13] = { 1e-1,1e-1,1e-4,1e-3,1e-4,1e-1,1e-3,1e-3,1e-3,1e-1,1e-4,1e-4,1e-2 };//可行性分析，每个约束的容忍度
 	int cons_num = 13; //不等式约束的个数
 	nlopt_opt opter = nlopt_create(NLOPT_LN_COBYLA, n);
+	{
+		std::lock_guard<std::mutex> lock(g_optimizer_mutex);
+		g_current_optimizer = opter;
+	}
+	g_eval_count.store(0);
+	{
+		std::lock_guard<std::mutex> lock(g_debug_callback_mutex);
+		g_last_debug_publish = std::chrono::steady_clock::time_point{};
+	}
 
 	//设置自变量上下限；
 	nlopt_set_lower_bounds(opter, lb);
@@ -43,8 +142,18 @@ void shove_optimization(unsigned n, double* x, double* grad, const double* lb, c
 
 	// 开始优化；
 	nlopt_result result = nlopt_optimize(opter, x, &f);  //
+	{
+		std::lock_guard<std::mutex> lock(g_optimizer_mutex);
+		if (g_current_optimizer == opter) {
+			g_current_optimizer = nullptr;
+		}
+	}
 
-	if (result > 0)
+	if (optimization_cancel_requested())
+	{
+		std::cout << "Optimization canceled!" << std::endl;
+	}
+	else if (result > 0)
 	{
 		// 约束反算
 		Eigen::ArrayXXd optimal_trajectory = constraint_judge(x, excavator_position);
@@ -124,6 +233,11 @@ double goal_function(unsigned n, const double *x, double *grad, void *excavator_
 		cout << *(x + i) << "  ";
 	}*/
 	clock_t  time_stt = clock();
+	if (optimization_cancel_requested())
+	{
+		request_force_stop_current_optimizer();
+		return std::numeric_limits<double>::infinity();
+	}
 	//利用x计算多项式系数
 	double x_tf = x[2]; //2020 / 10 / 09号张天赐更正 挖掘轨迹与物料的交点x方向上的值
 	double y_tf = x[3]; //2020 / 10 / 09号张天赐更正 挖掘轨迹与物料的交点y方向上的值
@@ -342,6 +456,11 @@ double goal_function(unsigned n, const double *x, double *grad, void *excavator_
 		break;	
 	}
 
+	double bucket_fill_rate = 0.0;
+	if (nominal_load_cap > 0.0) {
+		bucket_fill_rate = V / nominal_load_cap;
+	}
+	maybe_publish_optimization_debug(x, excavator_position, f, bucket_fill_rate, tf);
 
 	return f;
 }
@@ -355,6 +474,14 @@ void cons_V_gansu_shengsu(unsigned m, double *cons_result, unsigned n, const dou
 	{
 		cout << *(x + i) << "  ";
 	}*/
+	if (optimization_cancel_requested())
+	{
+		request_force_stop_current_optimizer();
+		for (unsigned i = 0; i < m; ++i) {
+			cons_result[i] = 0.0;
+		}
+		return;
+	}
 	//利用x计算多项式系数
 	double x_tf = x[2]; // 挖掘轨迹与物料的交点x方向上的值
 	double y_tf = x[3]; // 挖掘轨迹与物料的交点y方向上的值

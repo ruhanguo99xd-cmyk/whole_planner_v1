@@ -1,19 +1,19 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>mobility_planner_core</name>
+  <name>mission_operator_hmi</name>
   <version>0.1.0</version>
-  <description>Walk action adapter with mock and legacy backends.</description>
+  <description>Unified operator HMI for mission, mobility, and excavation planning.</description>
   <maintainer email="codex@example.com">Codex</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <depend>integrated_mission_interfaces</depend>
+  <depend>builtin_interfaces</depend>
   <depend>geometry_msgs</depend>
+  <depend>integrated_mission_interfaces</depend>
   <depend>nav_msgs</depend>
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
-  <exec_depend>sensor_msgs_py</exec_depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
 

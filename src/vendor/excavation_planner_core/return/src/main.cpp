@@ -11,8 +11,11 @@
 #include "truck_perceive/srv/perceive_truck.hpp"
 #include "tra_planning/msg/excavation_info.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/float32_multi_array.hpp"
 #include <chrono>
 #include <thread>
+#include <atomic>
+#include <future>
 #include <filesystem>
 
 int main(int argc, char ** argv)
@@ -37,16 +40,21 @@ int main(int argc, char ** argv)
 
     auto start_state = std::make_shared<ExcavationStartState>();
     auto excavation_started = std::make_shared<bool>(false);
+    auto cancel_requested = std::make_shared<std::atomic_bool>(false);
     // 创建服务客户端，用于请求矿卡位姿
     auto truck_client = node->create_client<PerceiveTruck>("/perceive_truck");
+    auto debug_qos = rclcpp::QoS(1).reliable().transient_local();
+    auto return_rotation_pub = node->create_publisher<std_msgs::msg::Float32MultiArray>(
+        "digging/debug/return_rotation_deg", debug_qos);
 
     auto dig_start_sub = node->create_subscription<BoolMsg>(
         "digging/excavation_start",
         rclcpp::QoS(10).reliable(),
-        [excavation_started,  node](const BoolMsg::SharedPtr msg)
+        [excavation_started, cancel_requested, node](const BoolMsg::SharedPtr msg)
         {
             if (msg->data)
             {
+                cancel_requested->store(false);
                 *excavation_started = true;
              
                 RCLCPP_INFO(node->get_logger(), "收到挖掘开始信号，复位规划开始等待挖掘起点数据...");
@@ -54,6 +62,19 @@ int main(int argc, char ** argv)
         }
     );
     (void)dig_start_sub;
+
+    auto dig_cancel_sub = node->create_subscription<BoolMsg>(
+        "digging/cancel",
+        rclcpp::QoS(10).reliable(),
+        [cancel_requested, node](const BoolMsg::SharedPtr msg)
+        {
+            if (msg->data) {
+                cancel_requested->store(true);
+                RCLCPP_WARN(node->get_logger(), "收到 dig cancel，终止当前 return 规划周期");
+            }
+        }
+    );
+    (void)dig_cancel_sub;
 
     auto sub = node->create_subscription<ExcavationInfo>(
         "digging/excavation_end_length",
@@ -80,6 +101,13 @@ int main(int argc, char ** argv)
 
     rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node);
+    std::atomic_bool spin_running(true);
+    std::thread spin_thread([&executor, &spin_running]() {
+        while (rclcpp::ok() && spin_running.load()) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    });
 
     // ====================== 参数声明 + 读取（放这里）======================
     // ---- 参数声明（建议在创建 node 后尽早做）----
@@ -110,8 +138,10 @@ int main(int argc, char ** argv)
     RCLCPP_INFO(node->get_logger(), "return_node 启动，等待挖掘开始信号 digging/excavation_start...");
     while (rclcpp::ok())
     {
+        bool cycle_canceled = false;
         // 每一轮开始前，保险起见再复位一次
         *excavation_started   = false;
+        cancel_requested->store(false);
         // start_state->received = false;
 
         // -------- 等待挖掘开始信号 --------
@@ -119,13 +149,20 @@ int main(int argc, char ** argv)
                     "[新一轮] 等待挖掘开始信号 digging/excavation_start...");
         while (rclcpp::ok() && !*excavation_started)
         {
-            executor.spin_some();    
+            if (cancel_requested->load()) {
+                cycle_canceled = true;
+                break;
+            }
             //这里收到digging/excavation_end_length时候 start_state->received =true;但是仍然需要等待digging/excavation_start才能计算
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
         if (!rclcpp::ok())
             break;
+        if (cycle_canceled) {
+            RCLCPP_WARN(node->get_logger(), "[新一轮] return 在等待开始信号阶段被取消");
+            continue;
+        }
 
         // -------- 等待挖掘开始点数据 --------
         RCLCPP_INFO(node->get_logger(),
@@ -134,8 +171,15 @@ int main(int argc, char ** argv)
         //短暂等待一会儿，确保能收到此时系统发布的最新消息
         auto t0 = std::chrono::steady_clock::now();
         while (rclcpp::ok() && std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(200)) {
-            executor.spin_some();
+            if (cancel_requested->load()) {
+                cycle_canceled = true;
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));            
+        }
+        if (cycle_canceled) {
+            RCLCPP_WARN(node->get_logger(), "[新一轮] return 在刷新 excavation_end_length 阶段被取消");
+            continue;
         }
 
         // -------- 兜底：如果到现在为止“从来没收到过 end_length”，那你就没缓存可用，必须等一次（带超时）--------
@@ -147,8 +191,15 @@ int main(int argc, char ** argv)
             auto t1 = std::chrono::steady_clock::now();
             while (rclcpp::ok() && !start_state->received &&
                 std::chrono::steady_clock::now() - t1 < std::chrono::seconds(20)) {
-                executor.spin_some();
+                if (cancel_requested->load()) {
+                    cycle_canceled = true;
+                    break;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            if (cycle_canceled) {
+                RCLCPP_WARN(node->get_logger(), "[新一轮] return 在等待 excavation_end_length 阶段被取消");
+                continue;
             }
 
             if (!start_state->received) {
@@ -170,12 +221,20 @@ int main(int argc, char ** argv)
 
         // -------- 获取矿卡位姿（服务） --------
         while (rclcpp::ok() && !truck_client->service_is_ready()) {
+            if (cancel_requested->load()) {
+                cycle_canceled = true;
+                break;
+            }
             RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 2000,
                                 "PerceiveTruck 服务不可用，等待服务上线...");
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
         if (!rclcpp::ok()) {
             break;
+        }
+        if (cycle_canceled) {
+            RCLCPP_WARN(node->get_logger(), "[新一轮] return 在等待矿卡服务阶段被取消");
+            continue;
         }
 
         auto request_truck = [&](std::shared_ptr<PerceiveTruck::Response> &resp_out) -> bool {
@@ -184,7 +243,9 @@ int main(int argc, char ** argv)
 
             auto t_start = std::chrono::steady_clock::now();
             while (rclcpp::ok() && std::chrono::steady_clock::now() - t_start < std::chrono::seconds(100)) {
-                executor.spin_some();
+                if (cancel_requested->load()) {
+                    return false;
+                }
                 if (fut.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
                     resp_out = fut.get();
                     return true;
@@ -196,7 +257,10 @@ int main(int argc, char ** argv)
 
         std::shared_ptr<PerceiveTruck::Response> truck_resp;
         while (rclcpp::ok() && !request_truck(truck_resp)) {
-            executor.spin_some();
+            if (cancel_requested->load()) {
+                cycle_canceled = true;
+                break;
+            }
             RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 100000,
                                 "PerceiveTruck 请求失败/超时，重新发请求...");
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -204,13 +268,25 @@ int main(int argc, char ** argv)
         if (!rclcpp::ok()) {
             break;
         }
+        if (cycle_canceled) {
+            RCLCPP_WARN(node->get_logger(), "[新一轮] return 在请求矿卡位姿阶段被取消");
+            continue;
+        }
 
         if (!truck_resp->issuccess) {
             RCLCPP_WARN(node->get_logger(), "PerceiveTruck 业务失败: %s，重新感知一次...", truck_resp->message.c_str());
             if (!request_truck(truck_resp) || !truck_resp->issuccess) {
+                if (cancel_requested->load()) {
+                    RCLCPP_WARN(node->get_logger(), "[新一轮] return 在矿卡重试阶段被取消");
+                    continue;
+                }
                 RCLCPP_WARN(node->get_logger(), "PerceiveTruck 仍失败，跳过本轮");
                 continue;
             }
+        }
+        if (cancel_requested->load()) {
+            RCLCPP_WARN(node->get_logger(), "[新一轮] return 在进入主规划前被取消");
+            continue;
         }
 
 
@@ -331,6 +407,10 @@ int main(int argc, char ** argv)
 
         for (int i = 0; i < t_num; ++i) 
         {
+            if (cancel_requested->load()) {
+                cycle_canceled = true;
+                break;
+            }
             Vector3d XYZ = curve[i];
             // DH参数
             MatrixXd DH_para   = DH_backward(4, -1, xyz4, XYZ, global::shovel_para);
@@ -343,6 +423,10 @@ int main(int argc, char ** argv)
             return_tuiya[i]    = DH_para_curve[i][2] + global::douchi4[2];
             // 计算斗杆倾角
             return_theta3[i]   = DH_para_curve[i][1] + M_PI /2 - global::theta2;
+        }
+        if (cycle_canceled) {
+            RCLCPP_WARN(node->get_logger(), "[新一轮] return 在 DH 轨迹采样阶段被取消");
+            continue;
         }
 
         // 对回转时间修正
@@ -377,6 +461,10 @@ int main(int argc, char ** argv)
         // constexpr double L0_tianlun = 0.42;         // 提升零位（m）
         for (double xq : t_01s)
         {
+            if (cancel_requested->load()) {
+                cycle_canceled = true;
+                break;
+            }
             // 对回转角度序列插值
             double rotation_rad = linearInterp(t_adj, return_rotation, xq);
             return_fix_rotation.push_back(rotation_rad);
@@ -394,6 +482,10 @@ int main(int argc, char ** argv)
             return_gan_enc.push_back((push_len - OE_zero) * cpr * ratio_tuiya / (M_PI * d_tuiya));
             return_rope_enc.push_back((lift_len - L0_tianlun) * cpr / (M_PI * d_juantong));
 
+        }
+        if (cycle_canceled) {
+            RCLCPP_WARN(node->get_logger(), "[新一轮] return 在插值阶段被取消");
+            continue;
         }
 
         // 输出数据
@@ -421,6 +513,13 @@ int main(int argc, char ** argv)
         // 提升编码器计数，间隔0.1s
         outputScalarCSV(return_rope_enc,     (csv_dir / "return_rope_enc.csv").string());
 
+        std_msgs::msg::Float32MultiArray return_rotation_msg;
+        return_rotation_msg.data.reserve(return_fix_rotation_deg.size());
+        for (double value : return_fix_rotation_deg) {
+            return_rotation_msg.data.push_back(static_cast<float>(value));
+        }
+        return_rotation_pub->publish(return_rotation_msg);
+
         outputVector(output_opt.ct_point,  (csv_dir / "opt_ct_point2.txt").string());
         outputVector(curve,                (csv_dir / "curve2.txt").string());
         outputVector(Ini_curve,            (csv_dir / "Ini_curve2.txt").string());
@@ -431,8 +530,12 @@ int main(int argc, char ** argv)
                 csv_dir.string().c_str());
     }
     // 保持节点运行，便于在终端查看输出或扩展订阅/服务
-
+	
     RCLCPP_INFO(node->get_logger(), "return_node 退出");
+    spin_running.store(false);
+    if (spin_thread.joinable()) {
+        spin_thread.join();
+    }
     rclcpp::shutdown();
     return 0;
 }

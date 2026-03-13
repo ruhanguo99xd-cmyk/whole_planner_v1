@@ -13,6 +13,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PlannerMode.msg"
   "msg/PlcSnapshot.msg"
   "msg/SubsystemStatus.msg"
+  "srv/ComputeMaterialTarget.srv"
+  "srv/ExtractMaterialBoundary.srv"
   "srv/SubmitMission.srv"
   DEPENDENCIES builtin_interfaces geometry_msgs action_msgs
 )

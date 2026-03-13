@@ -21,6 +21,33 @@
 - dig 主链新增 `legacy_dig_planner_orchestrator`
 - `phase2_real` 默认切到 `PRSdata_send + trajectory_planner + load + return` 在线规划链
 - 验证：`trajectory_planner/load/return` 已通过 dig action 在线跑通，不再只是编译通过
+- `mission_dispatcher` 接入 `/mobility/compute_material_target`
+- `material_target_planner` 改成三层骨架：`boundary_fit -> work_band -> candidate_evaluation`
+- `boundary_fit` 进一步落到正式结构：栅格滤波、弧长排序、边界曲线采样、法向/曲率/拟合误差输出
+- `work_band` 进一步落到正式结构：内/优选/外三层偏置边界、可达性裁剪、最大连通站位段保留
+- `work_band` 进一步补齐 `S414/S415`：障碍净空、局部坡度、估计转弯半径裁剪
+- `candidate_evaluation` 进一步补齐 `S510`：路径、参考点、偏置距离、安全、曲率、朝向多目标代价
+- `material_target_planner` 补齐 `work_band` 约束解析和 `candidate_evaluation` 权重解析
+- `material_target_planner` 前置新增几何输入适配：`request material_outline`、`boundary_input.outline_points`、`boundary_input.line_strips`、`boundary_input.scatter_points`
+- `scatter_points` 新增 ROI 裁剪、点数限制和角度分桶边界提取
+- 新增 `material_boundary_extractor`：`PointCloud2 -> boundary_outline`
+- 新增 `/mobility/extract_material_boundary`，供 `material_target_planner` 在线请求边界提取
+- `material_target_planner` 在 `boundary_input.source=pointcloud` 时切到在线边界提取链
+- 在线点云边界链补齐静态外参路径；无 `tf` 且 frame mismatch 时改为直接失败
+- 新增 `config/perception/material_boundary_extrinsic/` 机型外参目录，`phase2_real.launch.py` 改为按 `machine_model` 自动加载 `<machine_model>.yaml`，缺失时回退 `default.yaml`
+- 新增 `mission_operator_hmi` 统一上位机包
+- 统一上位机支持 `大规划 / 行走规划 / 挖掘规划` 三个页签切换
+- `行走规划` 页签按 `autowalk_hmi_qt` 的成熟布局补齐 `map/global_costmap/local_costmap`、状态灯、手动目标、`cmd_vel` 与履带速度曲线，并新增地图点选目标
+- `trajectory_planner` 新增 `digging/debug/segment*_path`、`time_axis`、`vgan_result`、`vrope_result`、`gan_len`、`rope_len`
+- `trajectory_planner` 新增 `digging/debug/optimization_candidate_path`、`digging/debug/optimization_metrics`，用于优化过程实时可视化
+- `load` / `return` 新增 `digging/debug/load_rotation_deg`、`digging/debug/return_rotation_deg`
+- `挖掘规划` 页签切换为直接订阅 `digging/debug/*` 实时绘图，不再依赖 CSV 才能可视化，并叠加优化中间候选轨迹
+- `phase2_real.launch.py` 新增 `launch_operator_hmi` 开关
+- `mobility_planner_core` 新增 `MANIFEST.in`，把 `material_target` 细粒度测试纳入 `colcon test`
+- 验证：`submit_demo_mission` 现在返回 `material_target_planner_v4` 的分层 debug 信息
+- 验证：新增 22 个 `material_target` / `boundary_extractor` 直接单测通过，干净 `colcon test` 回归为 36 项全部通过
+- 验证：运行态探针已跑通 `PointCloud2 -> material_boundary_extractor -> material_target_planner -> ComputeMaterialTarget`
+- 验证：统一上位机单测增至 9 项，GUI 进程和 `launch_operator_hmi:=true` 已实际拉起与解析通过
 
 ## Phase 3
 - PLC real bit 映射改为参数化
@@ -29,8 +56,15 @@
 - 增加 PLC 映射单测
 - 修复 legacy stop 收口顺序，消除重复 action 响应告警
 - 验证：9 项单测通过，真实链回归通过
+- dig cancel 总线下沉到 `trajectory_planner/load/return`
+- `legacy_dig_planner_orchestrator` 新增 `digging/cancel` 发布
+- `trajectory_planner` 新增 worker 线程 + `nlopt_force_stop`
+- `load` / `return` 在等待服务、等待消息和计算循环中响应 cancel
+- 验证：在线联调时，`/mission_dispatcher/stop` 会让 dig 进入 `cancel_requested -> canceled`，且 cancel 后不再生成 `csv_created/load`、`csv_created/return`
 
 ## Phase 4
 - 新增架构文档、接口文档、Runbook、阶段变更记录
 - 补充 Phase 2 构建/启动脚本
 - 固化当前风险与后续解锁策略
+- 补充 dig cancel 在线验收步骤
+- 补充 material target 三层结构说明

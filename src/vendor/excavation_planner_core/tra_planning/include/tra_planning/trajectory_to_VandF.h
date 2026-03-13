@@ -45,6 +45,12 @@ void calculate_Vel(const double* x, void* excavator_position,
                    ArrayXXd* rope_enc_out = nullptr   // 提升编码器值
 				   );
 
+Eigen::MatrixXd build_tip_trajectory_global(
+    const double* x,
+    void* excavator_position,
+    Eigen::ArrayXXd* time_out = nullptr
+);
+
 // === 第三段几何统一推导（声明）===
 // 说明：保持现有口径（切线+弧长，alpha_out=125°），并输出常用中间量。
 // 可选输出：tuiya_value_out / tisheng_value_out 为两路编码器计数。

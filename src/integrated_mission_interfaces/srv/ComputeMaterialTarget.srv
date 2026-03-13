@@ -1,0 +1,13 @@
+string request_id
+geometry_msgs/PoseStamped current_pose
+geometry_msgs/PoseStamped material_reference_pose
+geometry_msgs/Point[] material_outline
+float32 desired_standoff_m
+string material_profile_json
+string planner_constraints_json
+---
+bool success
+string message
+geometry_msgs/PoseStamped target_pose
+string walk_constraints_json
+string debug_json

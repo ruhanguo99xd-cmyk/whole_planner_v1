@@ -90,6 +90,8 @@ namespace autonomous_walk
       std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
     void publish_status(const std::string & status);
+    double distance_to_goal_2d() const;
+    bool has_valid_pose() const;
     
     // Action client
     rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SharedPtr navigate_client_;
@@ -109,6 +111,7 @@ namespace autonomous_walk
     std::string current_status_;
     geometry_msgs::msg::PoseStamped current_pose_;
     geometry_msgs::msg::PoseStamped current_goal_;
+    bool has_odom_;
 
     // Parameters
     double goal_tolerance_;

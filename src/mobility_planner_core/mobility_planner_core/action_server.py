@@ -17,6 +17,7 @@ from mobility_planner_core.mock_runtime import resolve_mock_behavior
 
 COMMAND_START = 1
 COMMAND_STOP = 2
+COMMAND_CANCEL = 3
 
 ERROR_BUSY = 1
 ERROR_BACKEND_UNAVAILABLE = 2
@@ -29,8 +30,21 @@ _STATUS_PROGRESS = {
     'completed': 1.0,
     'stopping': 0.1,
     'stopped': 0.0,
+    'cancel_requested': 0.05,
+    'canceled': 0.0,
     'failed': 1.0,
 }
+
+
+def _parse_legacy_status(raw_status: str) -> tuple[str, str]:
+    status_text = raw_status.strip()
+    if '|' not in status_text:
+        status = status_text.lower()
+        return status, f'legacy walk status={status}'
+    phase, detail = status_text.split('|', 1)
+    status = phase.strip().lower()
+    detail_text = detail.strip() or f'legacy walk status={status}'
+    return status, detail_text
 
 
 class MobilityActionServer(Node):
@@ -58,6 +72,7 @@ class MobilityActionServer(Node):
         self.lock = threading.Lock()
         self.cancel_event = threading.Event()
         self.worker_thread: Optional[threading.Thread] = None
+        self.shutdown_mode: Optional[str] = None
 
         self.action_server = ActionServer(
             self,
@@ -72,7 +87,7 @@ class MobilityActionServer(Node):
         self.get_logger().info(f'mobility_planner_core started: backend={self.backend}')
 
     def goal_callback(self, goal_request) -> GoalResponse:
-        if goal_request.command not in (COMMAND_START, COMMAND_STOP):
+        if goal_request.command not in (COMMAND_START, COMMAND_STOP, COMMAND_CANCEL):
             self.get_logger().warning('Reject walk command with invalid command id')
             return GoalResponse.REJECT
         if goal_request.command == COMMAND_START and goal_request.timeout_sec <= 0.0:
@@ -88,8 +103,10 @@ class MobilityActionServer(Node):
         goal = goal_handle.request
         if goal.command == COMMAND_START:
             result = self._handle_start(goal)
+        elif goal.command == COMMAND_STOP:
+            result = self._handle_shutdown('stop')
         else:
-            result = self._handle_stop(goal)
+            result = self._handle_shutdown('cancel')
         if result.accepted:
             goal_handle.succeed()
         else:
@@ -103,6 +120,7 @@ class MobilityActionServer(Node):
             self.current_mission_id = goal.mission_id
             self.current_phase = 'starting'
             self.current_error_code = 0
+            self.shutdown_mode = None
 
         if self.backend == 'mock':
             accepted, message, error_code = self._start_mock(goal)
@@ -118,15 +136,15 @@ class MobilityActionServer(Node):
             self.current_mission_id = ''
             self.current_phase = 'idle'
             self.current_error_code = error_code
+            self.shutdown_mode = None
         self._publish_status('failed', active=False, ready=False, error=True, detail=message, error_code=error_code)
         return self._build_result(False, error_code, message)
 
-    def _handle_stop(self, goal) -> WalkMission.Result:
-        del goal
+    def _handle_shutdown(self, shutdown_mode: str) -> WalkMission.Result:
         if self.backend == 'mock':
-            accepted, message, error_code = self._stop_mock()
+            accepted, message, error_code = self._shutdown_mock(shutdown_mode)
         elif self.backend == 'legacy_autonomous_walk_service':
-            accepted, message, error_code = self._stop_legacy()
+            accepted, message, error_code = self._shutdown_legacy(shutdown_mode)
         else:
             accepted, message, error_code = False, f'unsupported backend: {self.backend}', ERROR_BACKEND_UNAVAILABLE
 
@@ -160,7 +178,11 @@ class MobilityActionServer(Node):
             self._publish_status('walking', active=True, ready=False, error=False, detail='mock walk running', progress=progress, mission_id=mission_id)
             time.sleep(0.2)
         if self.cancel_event.is_set():
-            self._publish_status('stopped', active=False, ready=True, error=False, detail='mock walk stopped', mission_id=mission_id, clear_mission=True)
+            with self.lock:
+                shutdown_mode = self.shutdown_mode or 'cancel'
+            phase = 'canceled' if shutdown_mode == 'cancel' else 'stopped'
+            detail = f'mock walk {phase}'
+            self._publish_status(phase, active=False, ready=True, error=False, detail=detail, mission_id=mission_id, clear_mission=True)
             return
         if outcome == 'fail':
             self._publish_status('failed', active=False, ready=False, error=True, detail='mock walk failed', error_code=ERROR_BACKEND_FAILED, mission_id=mission_id)
@@ -193,23 +215,30 @@ class MobilityActionServer(Node):
         self._publish_status('starting', active=True, ready=False, error=False, detail='legacy walk accepted', mission_id=goal.mission_id)
         return True, 'received', 0
 
-    def _stop_mock(self) -> tuple[bool, str, int]:
+    def _shutdown_mock(self, shutdown_mode: str) -> tuple[bool, str, int]:
         self.cancel_event.set()
         with self.lock:
+            self.shutdown_mode = shutdown_mode
             mission_id = self.current_mission_id
             running = self.worker_thread is not None and self.worker_thread.is_alive()
-        if running:
-            self._publish_status('stopping', active=True, ready=False, error=False, detail='mock walk stopping', mission_id=mission_id)
-        else:
-            self._publish_status('idle', active=False, ready=True, error=False, detail='mock walk idle', mission_id=mission_id, clear_mission=True)
+        if not mission_id and not running:
+            self._publish_status('idle', active=False, ready=True, error=False, detail='walk idle', mission_id='', clear_mission=True)
+            return True, 'received', 0
+        phase = 'cancel_requested' if shutdown_mode == 'cancel' else 'stopping'
+        detail = 'mock walk cancel requested' if shutdown_mode == 'cancel' else 'mock walk stopping'
+        self._publish_status(phase, active=True, ready=False, error=False, detail=detail, mission_id=mission_id)
         return True, 'received', 0
 
-    def _stop_legacy(self) -> tuple[bool, str, int]:
-        mission_id = self.current_mission_id
+    def _shutdown_legacy(self, shutdown_mode: str) -> tuple[bool, str, int]:
+        with self.lock:
+            self.shutdown_mode = shutdown_mode
+            mission_id = self.current_mission_id
         if not mission_id:
             self._publish_status('idle', active=False, ready=True, error=False, detail='walk idle', mission_id='', clear_mission=True)
             return True, 'received', 0
-        self._publish_status('stopping', active=True, ready=False, error=False, detail='legacy walk stopping', mission_id=mission_id)
+        phase = 'cancel_requested' if shutdown_mode == 'cancel' else 'stopping'
+        detail = 'legacy walk cancel requested' if shutdown_mode == 'cancel' else 'legacy walk stopping'
+        self._publish_status(phase, active=True, ready=False, error=False, detail=detail, mission_id=mission_id)
         if not self._legacy_stop_client.wait_for_service(timeout_sec=2.0):
             return False, 'legacy walk stop service unavailable', ERROR_BACKEND_UNAVAILABLE
         future = self._legacy_stop_client.call_async(Trigger.Request())
@@ -221,7 +250,7 @@ class MobilityActionServer(Node):
         return True, 'received', 0
 
     def _on_legacy_status(self, msg: String) -> None:
-        status = msg.data.strip().lower()
+        status, detail = _parse_legacy_status(msg.data)
         phase_map = {
             'initialized': ('idle', False, True, False),
             'idle': ('idle', False, True, False),
@@ -229,15 +258,19 @@ class MobilityActionServer(Node):
             'walking': ('walking', True, False, False),
             'success': ('completed', False, True, False),
             'stopped': ('stopped', False, True, False),
-            'canceled': ('stopped', False, True, False),
+            'canceled': ('canceled', False, True, False),
             'aborted': ('failed', False, False, True),
             'failed': ('failed', False, False, True),
             'rejected': ('failed', False, False, True),
         }
         phase, active, ready, error = phase_map.get(status, ('walking', True, False, False))
-        detail = f'legacy walk status={status}'
+        with self.lock:
+            shutdown_mode = self.shutdown_mode
+        if shutdown_mode == 'cancel' and phase == 'stopped':
+            phase = 'canceled'
+            detail = f'{detail} (mapped from stop after cancel request)'
         error_code = ERROR_BACKEND_FAILED if error else 0
-        clear_mission = phase in {'idle', 'stopped'}
+        clear_mission = phase in {'idle', 'stopped', 'canceled'}
         self._publish_status(
             phase,
             active=active,
@@ -252,7 +285,7 @@ class MobilityActionServer(Node):
     def _is_busy_locked(self) -> bool:
         if self.current_mission_id == '':
             return False
-        return self.current_phase not in {'idle', 'stopped'}
+        return self.current_phase not in {'idle', 'stopped', 'canceled'}
 
     def _publish_status(
         self,
@@ -287,6 +320,7 @@ class MobilityActionServer(Node):
                 self.current_mission_id = ''
                 self.current_phase = 'idle'
                 self.current_error_code = 0
+                self.shutdown_mode = None
 
     @staticmethod
     def _build_result(accepted: bool, error_code: int, message: str) -> WalkMission.Result:

@@ -8,8 +8,9 @@ from geometry_msgs.msg import PoseStamped
 from integrated_mission_interfaces.action import DigMission, WalkMission
 from integrated_mission_interfaces.msg import PlannerMode as PlannerModeMsg
 from integrated_mission_interfaces.msg import PlcSnapshot, SubsystemStatus
-from integrated_mission_interfaces.srv import SubmitMission
+from integrated_mission_interfaces.srv import ComputeMaterialTarget, SubmitMission
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_srvs.srv import Trigger
@@ -24,9 +25,11 @@ from mission_dispatcher.state_machine import (
 
 COMMAND_START = 1
 COMMAND_STOP = 2
+COMMAND_CANCEL = 3
 ERROR_TIMEOUT = 3
 ERROR_FAILED = 5
 STOPPED_PHASES = {'idle', 'stopped'}
+CANCELED_PHASES = {'canceled'}
 COMPLETED_PHASES = {'completed'}
 
 
@@ -38,6 +41,7 @@ class MissionRequest:
     walk_constraints_json: str
     dig_parameters_json: str
     priority: int
+    resolution_detail: str = ''
 
 
 @dataclass
@@ -51,19 +55,23 @@ class PendingFailure:
 class MissionDispatcherNode(Node):
     def __init__(self) -> None:
         super().__init__('mission_dispatcher')
+        self.callback_group = ReentrantCallbackGroup()
         self.declare_parameter('walk_action_name', '/mobility/execute')
         self.declare_parameter('dig_action_name', '/excavation/execute')
+        self.declare_parameter('material_target_service_name', '/mobility/compute_material_target')
         self.declare_parameter('walk_status_topic', '/mobility/status')
         self.declare_parameter('dig_status_topic', '/excavation/status')
         self.declare_parameter('plc_topic', '/plc/status')
         self.declare_parameter('loop_period_sec', 0.1)
         self.declare_parameter('walk_timeout_sec', 30.0)
         self.declare_parameter('dig_timeout_sec', 60.0)
+        self.declare_parameter('material_target_timeout_sec', 10.0)
         self.declare_parameter('max_retry_count', 1)
         self.declare_parameter('auto_start', True)
 
         self.walk_timeout_sec = float(self.get_parameter('walk_timeout_sec').value)
         self.dig_timeout_sec = float(self.get_parameter('dig_timeout_sec').value)
+        self.material_target_timeout_sec = float(self.get_parameter('material_target_timeout_sec').value)
         self.max_retry_count = int(self.get_parameter('max_retry_count').value)
         self.auto_enabled = bool(self.get_parameter('auto_start').value)
 
@@ -82,31 +90,41 @@ class MissionDispatcherNode(Node):
         self.pending_command_phase: Optional[str] = None
         self.pending_command_type: Optional[str] = None
         self.pending_failure: Optional[PendingFailure] = None
+        self.completed_phase_details = {'walk': '', 'dig': ''}
         self.retry_count = {'walk': 0, 'dig': 0}
         self.last_transition_reason = 'startup'
 
         walk_name = str(self.get_parameter('walk_action_name').value)
         dig_name = str(self.get_parameter('dig_action_name').value)
+        material_target_service_name = str(self.get_parameter('material_target_service_name').value)
         plc_topic = str(self.get_parameter('plc_topic').value)
         walk_status_topic = str(self.get_parameter('walk_status_topic').value)
         dig_status_topic = str(self.get_parameter('dig_status_topic').value)
 
-        self.walk_client = ActionClient(self, WalkMission, walk_name)
-        self.dig_client = ActionClient(self, DigMission, dig_name)
-        self.create_subscription(PlcSnapshot, plc_topic, self._on_plc_snapshot, 10)
-        self.create_subscription(SubsystemStatus, walk_status_topic, self._on_walk_status, 10)
-        self.create_subscription(SubsystemStatus, dig_status_topic, self._on_dig_status, 10)
-        self.create_service(Trigger, '/mission_dispatcher/start', self._on_start)
-        self.create_service(Trigger, '/mission_dispatcher/stop', self._on_stop)
-        self.create_service(Trigger, '/mission_dispatcher/recover', self._on_recover)
-        self.create_service(SubmitMission, '/mission_dispatcher/submit_mission', self._on_submit_mission)
+        self.walk_client = ActionClient(self, WalkMission, walk_name, callback_group=self.callback_group)
+        self.dig_client = ActionClient(self, DigMission, dig_name, callback_group=self.callback_group)
+        self.material_target_client = self.create_client(
+            ComputeMaterialTarget, material_target_service_name, callback_group=self.callback_group
+        )
+        self.create_subscription(PlcSnapshot, plc_topic, self._on_plc_snapshot, 10, callback_group=self.callback_group)
+        self.create_subscription(SubsystemStatus, walk_status_topic, self._on_walk_status, 10, callback_group=self.callback_group)
+        self.create_subscription(SubsystemStatus, dig_status_topic, self._on_dig_status, 10, callback_group=self.callback_group)
+        self.create_service(Trigger, '/mission_dispatcher/start', self._on_start, callback_group=self.callback_group)
+        self.create_service(Trigger, '/mission_dispatcher/stop', self._on_stop, callback_group=self.callback_group)
+        self.create_service(Trigger, '/mission_dispatcher/recover', self._on_recover, callback_group=self.callback_group)
+        self.create_service(
+            SubmitMission,
+            '/mission_dispatcher/submit_mission',
+            self._on_submit_mission,
+            callback_group=self.callback_group,
+        )
 
         loop_period = float(self.get_parameter('loop_period_sec').value)
         self.timer = self.create_timer(loop_period, self._on_loop)
         self._publish_mode('startup')
         self.get_logger().info(
             f'mission_dispatcher started: walk_action={walk_name} '
-            f'dig_action={dig_name} auto={self.auto_enabled}'
+            f'dig_action={dig_name} material_target_service={material_target_service_name} auto={self.auto_enabled}'
         )
 
     def _on_start(self, request, response):
@@ -122,8 +140,8 @@ class MissionDispatcherNode(Node):
         self.auto_enabled = False
         self.next_phase = None
         self.pending_failure = None
-        if self.active_phase is not None and self.phase_command_state != 'stop_requested' and not self.command_request_in_flight:
-            self._send_phase_command(self.active_phase, COMMAND_STOP)
+        if self.active_phase is not None and self.phase_command_state != 'cancel_requested' and not self.command_request_in_flight:
+            self._send_phase_command(self.active_phase, COMMAND_CANCEL)
         else:
             self._clear_active_phase('stop_service')
         self.current_mission = None
@@ -139,20 +157,31 @@ class MissionDispatcherNode(Node):
             response.message = 'dispatcher busy'
             return response
         mission_id = request.mission_id or f'mission-{int(time.time())}'
+        walk_target, resolution_detail, resolved_walk_constraints = self._resolve_walk_target(request, mission_id)
+        if walk_target is None:
+            response.accepted = False
+            response.message = resolution_detail
+            return response
+        if not walk_target.header.frame_id:
+            walk_target.header.frame_id = 'map'
+
         self.current_mission = MissionRequest(
             mission_id=mission_id,
-            walk_target=request.walk_target,
+            walk_target=walk_target,
             dig_target_zone=request.dig_target_zone,
-            walk_constraints_json=request.walk_constraints_json,
+            walk_constraints_json=resolved_walk_constraints,
             dig_parameters_json=request.dig_parameters_json,
             priority=int(request.priority),
+            resolution_detail=resolution_detail,
         )
         self.next_phase = 'walk'
         self.pending_failure = None
         self.retry_count = {'walk': 0, 'dig': 0}
         response.accepted = True
         response.message = f'{mission_id} queued'
-        self.get_logger().info(f'Mission queued: {mission_id}')
+        response.resolved_walk_target = walk_target
+        response.resolution_detail = resolution_detail
+        self.get_logger().info(f'Mission queued: {mission_id} walk_resolution={resolution_detail}')
         return response
 
     def _on_recover(self, request, response):
@@ -169,11 +198,48 @@ class MissionDispatcherNode(Node):
         self.current_mission = None
         self.next_phase = None
         self.retry_count = {'walk': 0, 'dig': 0}
-        self._clear_active_phase('recover_service')
+        if self.active_phase is not None and self.phase_command_state != 'cancel_requested' and not self.command_request_in_flight:
+            self._send_phase_command(self.active_phase, COMMAND_CANCEL)
+        else:
+            self._clear_active_phase('recover_service')
         self._transition(PlannerMode.IDLE, 'recover_service')
         response.success = True
         response.message = 'dispatcher recovered to idle'
         return response
+
+    def _resolve_walk_target(self, request, mission_id: str) -> tuple[Optional[PoseStamped], str, str]:
+        walk_constraints_json = request.walk_constraints_json
+        if not request.use_material_target:
+            return request.walk_target, 'direct_walk_target', walk_constraints_json
+
+        if not self.material_target_client.wait_for_service(timeout_sec=3.0):
+            return None, 'material target service unavailable', walk_constraints_json
+
+        material_request = ComputeMaterialTarget.Request()
+        material_request.request_id = mission_id
+        material_request.current_pose = request.current_pose
+        material_request.material_reference_pose = request.material_reference_pose
+        material_request.material_outline = request.material_outline
+        material_request.desired_standoff_m = float(request.desired_standoff_m)
+        material_request.material_profile_json = request.material_profile_json
+        material_request.planner_constraints_json = request.target_planner_constraints_json
+        future = self.material_target_client.call_async(material_request)
+        deadline = time.monotonic() + self.material_target_timeout_sec
+        while time.monotonic() < deadline:
+            if future.done():
+                break
+            time.sleep(0.05)
+        if not future.done():
+            return None, 'material target request timed out', walk_constraints_json
+        try:
+            result = future.result()
+        except Exception as exc:
+            return None, f'material target request failed: {exc}', walk_constraints_json
+        if not result.success:
+            return None, result.message or 'material target request rejected', walk_constraints_json
+        resolution_detail = f'material_target:{result.debug_json}' if result.debug_json else 'material_target'
+        resolved_walk_constraints = walk_constraints_json or result.walk_constraints_json
+        return result.target_pose, resolution_detail, resolved_walk_constraints
 
     def _on_plc_snapshot(self, msg: PlcSnapshot) -> None:
         self.plc_snapshot = msg
@@ -207,8 +273,8 @@ class MissionDispatcherNode(Node):
         if decision.mode == PlannerMode.FAULT:
             if decision.mode != self.mode:
                 self._transition(decision.mode, decision.reason)
-            if self.active_phase is not None and self.phase_command_state != 'stop_requested' and not self.command_request_in_flight:
-                self._send_phase_command(self.active_phase, COMMAND_STOP)
+            if self.active_phase is not None and self.phase_command_state != 'cancel_requested' and not self.command_request_in_flight:
+                self._send_phase_command(self.active_phase, COMMAND_CANCEL)
             return
 
         if self._execution_timed_out():
@@ -242,6 +308,7 @@ class MissionDispatcherNode(Node):
             self._stage_failure(self.active_phase, status.error_code or ERROR_FAILED, status.detail, retryable=True)
             return
         if self.phase_command_state == 'started' and status.phase in COMPLETED_PHASES and not self.command_request_in_flight:
+            self.completed_phase_details[self.active_phase] = status.detail
             self._send_phase_command(self.active_phase, COMMAND_STOP)
             return
         if self.phase_command_state == 'stop_requested' and status.phase in STOPPED_PHASES and not status.active:
@@ -250,6 +317,13 @@ class MissionDispatcherNode(Node):
                 self._finalize_failure()
                 return
             self._complete_phase(self.active_phase)
+            return
+        if self.phase_command_state == 'cancel_requested' and status.phase in (STOPPED_PHASES | CANCELED_PHASES) and not status.active:
+            if self.pending_failure is not None:
+                self._clear_active_phase('failure_cleanup')
+                self._finalize_failure()
+            else:
+                self._clear_active_phase(f'{self.active_phase}_canceled')
 
     def _send_phase_command(self, phase: str, command: int) -> None:
         if self.current_mission is None and command == COMMAND_START:
@@ -282,41 +356,42 @@ class MissionDispatcherNode(Node):
             raise ValueError(f'unknown phase: {phase}')
 
         if not client.wait_for_server(timeout_sec=0.5):
-            if command == COMMAND_STOP:
-                self.get_logger().error(f'{phase} stop action server unavailable')
-                self._clear_active_phase(f'{phase}_stop_server_unavailable')
-                self._transition(PlannerMode.FAULT, f'{phase}_stop_unavailable')
+            if command in (COMMAND_STOP, COMMAND_CANCEL):
+                self.get_logger().error(f'{phase} shutdown action server unavailable')
+                self._clear_active_phase(f'{phase}_shutdown_server_unavailable')
+                self._transition(PlannerMode.FAULT, f'{phase}_shutdown_unavailable')
             else:
                 self._stage_failure(phase, ERROR_FAILED, f'{phase} action server unavailable', retryable=True)
             return
 
         self.command_request_in_flight = True
         self.pending_command_phase = phase
-        self.pending_command_type = 'start' if command == COMMAND_START else 'stop'
+        command_type = {COMMAND_START: 'start', COMMAND_STOP: 'stop', COMMAND_CANCEL: 'cancel'}[command]
+        self.pending_command_type = command_type
         future = client.send_goal_async(goal)
         future.add_done_callback(
-            lambda fut, phase_name=phase, command_type=self.pending_command_type: self._on_command_goal_response(phase_name, command_type, fut)
+            lambda fut, phase_name=phase, command_name=command_type: self._on_command_goal_response(phase_name, command_name, fut)
         )
-        self.get_logger().info(f'Sent {self.pending_command_type} command to {phase}')
+        self.get_logger().info(f'Sent {command_type} command to {phase}')
 
     def _on_command_goal_response(self, phase: str, command_type: str, future) -> None:
         try:
             goal_handle = future.result()
         except Exception as exc:
             self.command_request_in_flight = False
-            if command_type == 'stop':
-                self.get_logger().error(f'{phase} stop goal response failed: {exc}')
-                self._clear_active_phase(f'{phase}_stop_goal_response_failed')
-                self._transition(PlannerMode.FAULT, f'{phase}_stop_goal_response_failed')
+            if command_type in {'stop', 'cancel'}:
+                self.get_logger().error(f'{phase} {command_type} goal response failed: {exc}')
+                self._clear_active_phase(f'{phase}_{command_type}_goal_response_failed')
+                self._transition(PlannerMode.FAULT, f'{phase}_{command_type}_goal_response_failed')
             else:
                 self._stage_failure(phase, ERROR_FAILED, f'{phase} {command_type} goal response failed: {exc}', retryable=True)
             return
         if not goal_handle.accepted:
             self.command_request_in_flight = False
-            if command_type == 'stop':
-                self.get_logger().error(f'{phase} stop goal rejected')
-                self._clear_active_phase(f'{phase}_stop_goal_rejected')
-                self._transition(PlannerMode.FAULT, f'{phase}_stop_goal_rejected')
+            if command_type in {'stop', 'cancel'}:
+                self.get_logger().error(f'{phase} {command_type} goal rejected')
+                self._clear_active_phase(f'{phase}_{command_type}_goal_rejected')
+                self._transition(PlannerMode.FAULT, f'{phase}_{command_type}_goal_rejected')
             else:
                 self._stage_failure(phase, ERROR_FAILED, f'{phase} {command_type} goal rejected', retryable=False)
             return
@@ -331,19 +406,19 @@ class MissionDispatcherNode(Node):
         try:
             wrapped = future.result()
         except Exception as exc:
-            if command_type == 'stop':
-                self.get_logger().error(f'{phase} stop result failed: {exc}')
-                self._clear_active_phase(f'{phase}_stop_result_failed')
-                self._transition(PlannerMode.FAULT, f'{phase}_stop_result_failed')
+            if command_type in {'stop', 'cancel'}:
+                self.get_logger().error(f'{phase} {command_type} result failed: {exc}')
+                self._clear_active_phase(f'{phase}_{command_type}_result_failed')
+                self._transition(PlannerMode.FAULT, f'{phase}_{command_type}_result_failed')
             else:
                 self._stage_failure(phase, ERROR_FAILED, f'{phase} {command_type} result failed: {exc}', retryable=True)
             return
         result = wrapped.result
         if wrapped.status != GoalStatus.STATUS_SUCCEEDED or not result.accepted:
-            if command_type == 'stop':
-                self.get_logger().error(f'{phase} stop failed: {result.message}')
-                self._clear_active_phase(f'{phase}_stop_failed')
-                self._transition(PlannerMode.FAULT, f'{phase}_stop_failed')
+            if command_type in {'stop', 'cancel'}:
+                self.get_logger().error(f'{phase} {command_type} failed: {result.message}')
+                self._clear_active_phase(f'{phase}_{command_type}_failed')
+                self._transition(PlannerMode.FAULT, f'{phase}_{command_type}_failed')
             else:
                 self._stage_failure(phase, result.error_code or ERROR_FAILED, result.message or f'{phase} {command_type} failed', retryable=True)
             return
@@ -353,15 +428,25 @@ class MissionDispatcherNode(Node):
             self.phase_started_at = time.monotonic()
             self._transition(DispatcherStateMachine.active_mode_for_phase(phase), f'{phase}_start_ack')
             return
-        self.phase_command_state = 'stop_requested'
-        self.get_logger().info(f'{phase} stop acknowledged')
+
+        self.phase_command_state = 'stop_requested' if command_type == 'stop' else 'cancel_requested'
+        self.get_logger().info(f'{phase} {command_type} acknowledged')
         status = self._current_phase_status(phase)
-        if status is not None and self._status_matches_active_phase(status) and status.phase in STOPPED_PHASES and not status.active:
+        if status is None or not self._status_matches_active_phase(status) or status.active:
+            return
+        if command_type == 'stop' and status.phase in STOPPED_PHASES:
             if self.pending_failure is not None:
                 self._clear_active_phase('failure_cleanup')
                 self._finalize_failure()
             else:
                 self._complete_phase(phase)
+            return
+        if command_type == 'cancel' and status.phase in (STOPPED_PHASES | CANCELED_PHASES):
+            if self.pending_failure is not None:
+                self._clear_active_phase('failure_cleanup')
+                self._finalize_failure()
+            else:
+                self._clear_active_phase(f'{phase}_canceled')
 
     def _execution_timed_out(self) -> bool:
         if self.active_phase is None or self.phase_command_state != 'started':
@@ -375,8 +460,8 @@ class MissionDispatcherNode(Node):
             self.get_logger().error(
                 f'Phase {phase} failed: code={code} message={message} retryable={retryable}'
             )
-        if self.active_phase is not None and self.phase_command_state != 'stop_requested' and not self.command_request_in_flight:
-            self._send_phase_command(self.active_phase, COMMAND_STOP)
+        if self.active_phase is not None and self.phase_command_state != 'cancel_requested' and not self.command_request_in_flight:
+            self._send_phase_command(self.active_phase, COMMAND_CANCEL)
         elif self.active_phase is None and not self.command_request_in_flight:
             self._finalize_failure()
 
@@ -394,6 +479,7 @@ class MissionDispatcherNode(Node):
 
     def _complete_phase(self, phase: str) -> None:
         mission_id = self.current_mission.mission_id if self.current_mission else 'unknown'
+        completion_detail = self.completed_phase_details.get(phase, '')
         self._clear_active_phase(f'{phase}_complete')
         if phase == 'walk':
             self.next_phase = 'dig'
@@ -403,7 +489,10 @@ class MissionDispatcherNode(Node):
             self.current_mission = None
             self.next_phase = None
             self.retry_count = {'walk': 0, 'dig': 0}
-            self._transition(PlannerMode.IDLE, f'mission_complete:{mission_id}')
+            reason = f'dig_complete_need_walk_target:{mission_id}'
+            if completion_detail:
+                reason = f'{reason}:{completion_detail}'
+            self._transition(PlannerMode.IDLE, reason)
             return
         raise ValueError(f'unknown phase: {phase}')
 
@@ -414,6 +503,9 @@ class MissionDispatcherNode(Node):
         self.command_request_in_flight = False
         self.pending_command_phase = None
         self.pending_command_type = None
+        if reason.endswith('_complete') and reason.startswith(('walk', 'dig')):
+            phase = reason.split('_', 1)[0]
+            self.completed_phase_details[phase] = ''
         self.get_logger().info(f'Active phase cleared: {reason}')
 
     def _current_phase_status(self, phase: Optional[str]) -> Optional[SubsystemStatus]:

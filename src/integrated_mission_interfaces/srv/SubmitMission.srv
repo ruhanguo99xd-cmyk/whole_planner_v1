@@ -1,5 +1,12 @@
 string mission_id
+bool use_material_target
+geometry_msgs/PoseStamped current_pose
 geometry_msgs/PoseStamped walk_target
+geometry_msgs/PoseStamped material_reference_pose
+geometry_msgs/Point[] material_outline
+float32 desired_standoff_m
+string material_profile_json
+string target_planner_constraints_json
 string dig_target_zone
 string walk_constraints_json
 string dig_parameters_json
@@ -7,3 +14,5 @@ uint8 priority
 ---
 bool accepted
 string message
+geometry_msgs/PoseStamped resolved_walk_target
+string resolution_detail

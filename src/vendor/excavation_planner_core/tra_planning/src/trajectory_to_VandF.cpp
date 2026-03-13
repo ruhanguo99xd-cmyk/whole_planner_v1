@@ -582,6 +582,59 @@ void trajectory_to_V_f_F_houjiao(MatrixXd tip_trajectory_global, ArrayXXd vx, Ar
 }
 
 
+Eigen::MatrixXd build_tip_trajectory_global(
+    const double* x,
+    void* excavator_position,
+    Eigen::ArrayXXd* time_out)
+{
+    double x_tf = x[2];
+    double y_tf = x[3];
+    double tf = x[4];
+    double a6_1 = pow(10, -9) * x[0];
+    double a5_1 = 6 * x_tf / pow(tf, 5) - 3*v23x/pow(tf, 4)- 3 * tf * a6_1;
+    double a4_1 = -15 * x_tf / pow(tf, 4)+ 8*v23x/pow(tf, 3) + 3 * pow(tf, 2) * a6_1;
+    double a3_1 = 10 * x_tf / pow(tf, 3) - 6*v23x/pow(tf, 2)- pow(tf, 3) * a6_1;
+    double a2_1 = 0;
+    double a1_1 = v23x;
+    double a0_1 = 0;
+    ArrayXXd x_p(1, 7);
+    x_p << a6_1, a5_1, a4_1, a3_1, a2_1, a1_1, a0_1;
+
+    double a6_2 = pow(10, -9) * x[1];
+    double a5_2 = 6 * y_tf / pow(tf, 5) - 3 * tf * a6_2;
+    double a4_2 = -15 * y_tf / pow(tf, 4) + 3 * pow(tf, 2) * a6_2;
+    double a3_2 = 10 * y_tf / pow(tf, 3) - pow(tf, 3) * a6_2;
+    double a2_2 = 0;
+    double a1_2 = 0;
+    double a0_2 = 0;
+    ArrayXXd y_p(1, 7);
+    y_p << a6_2, a5_2, a4_2, a3_2, a2_2, a1_2, a0_2;
+
+    ArrayXXd t = get_time(0, tf, pp);
+    if (time_out) {
+        *time_out = t;
+    }
+    int m_total = t.size();
+    ArrayXXd xt = polyval(x_p, t);
+    ArrayXXd yt = polyval(y_p, t);
+    xt(0) = yt(0) = 0;
+
+    double* my_position = (double*)excavator_position;
+    ArrayXXd tip_trajectory_global_x(1, m_total);
+    ArrayXXd tip_trajectory_global_y(1, m_total);
+    ArrayXXd tip_trajectory_global_z(1, m_total);
+    tip_trajectory_global_x = *my_position - (dOC + (H - init_tip_height) * tan(B0)) * sin(*(my_position + 3)) - xt.array() * sin(*(my_position + 3));
+    tip_trajectory_global_y = *(my_position + 1) + (dOC + (H - init_tip_height) * tan(B0)) * cos(*(my_position + 3)) + xt.array() * cos(*(my_position + 3));
+    tip_trajectory_global_z = *(my_position + 2) - *(my_position + 2) + yt.array() + init_tip_height;
+
+    MatrixXd tip_trajectory_mid_global(3, m_total);
+    tip_trajectory_mid_global.row(0) = tip_trajectory_global_x;
+    tip_trajectory_mid_global.row(1) = tip_trajectory_global_y;
+    tip_trajectory_mid_global.row(2) = tip_trajectory_global_z;
+    return tip_trajectory_mid_global;
+}
+
+
 // 速度与力计算函数（六次）
 void calculate_Vel(const double* x, void* excavator_position,
                    Eigen::MatrixXd x_dianyun_train,
@@ -663,22 +716,10 @@ void calculate_Vel(const double* x, void* excavator_position,
 
 
 	double* my_position = (double*)excavator_position;
-	//中间的轨迹
-	ArrayXXd tip_trajectory_global_x(1, m_total);
-	ArrayXXd tip_trajectory_global_y(1, m_total);
-	ArrayXXd tip_trajectory_global_z(1, m_total);
-	//cout << "*my_position" << *my_position << endl;
-	//cout << "*(my_position + 1)" << *(my_position + 1) << endl;
-	//cout << "*(my_position + 2)" << *(my_position + 2) << endl;
-	//cout << "*(my_position + 3)" << *(my_position + 3) << endl;	
-	tip_trajectory_global_x = *my_position - (dOC + (H - init_tip_height) * tan(B0)) * sin(*(my_position + 3)) - xt.array() * sin(*(my_position + 3));
-	tip_trajectory_global_y = *(my_position + 1) + (dOC + (H - init_tip_height) * tan(B0)) * cos(*(my_position + 3)) + xt.array() * cos(*(my_position + 3));
-	tip_trajectory_global_z = *(my_position + 2) - *(my_position + 2) + yt.array() + init_tip_height;
-
-	MatrixXd tip_trajectory_mid_global(3, m_total);
-	tip_trajectory_mid_global.row(0) = tip_trajectory_global_x;
-	tip_trajectory_mid_global.row(1) = tip_trajectory_global_y;
-	tip_trajectory_mid_global.row(2) = tip_trajectory_global_z;
+	MatrixXd tip_trajectory_mid_global = build_tip_trajectory_global(x, excavator_position, nullptr);
+	ArrayXXd tip_trajectory_global_x = tip_trajectory_mid_global.row(0).array();
+	ArrayXXd tip_trajectory_global_y = tip_trajectory_mid_global.row(1).array();
+	ArrayXXd tip_trajectory_global_z = tip_trajectory_mid_global.row(2).array();
 	/*cout << "-------------tip_trajectory_mid_global--------------" << endl;
 	cout << tip_trajectory_mid_global << endl;*/
 

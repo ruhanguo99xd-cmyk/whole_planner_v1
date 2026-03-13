@@ -1,0 +1,11 @@
+material_boundary_extractor:
+  ros__parameters:
+    # 示例机型文件。固定外参后，优先在这里维护，而不是每次 launch 命令手动覆盖。
+    use_static_extrinsic: false
+    sensor_frame_id: "hesai_frame"
+    extrinsic_translation_x_m: 0.0
+    extrinsic_translation_y_m: 0.0
+    extrinsic_translation_z_m: 0.0
+    extrinsic_roll_deg: 0.0
+    extrinsic_pitch_deg: 0.0
+    extrinsic_yaw_deg: 0.0

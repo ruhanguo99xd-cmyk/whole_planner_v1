@@ -1,5 +1,6 @@
 #include <autonomous_walk/autonomous_walk.hpp>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <future>
 
@@ -11,6 +12,7 @@ namespace autonomous_walk
 AutonomousWalk::AutonomousWalk(const std::string & name)
 : Node(name),
   current_status_("idle"),
+  has_odom_(false),
   goal_tolerance_(0.2),
   use_planner_client_(false),
   navigate_action_name_("navigate_to_pose"),
@@ -161,9 +163,36 @@ void AutonomousWalk::navigate_result_callback(
 {
   switch (result.code) {
     case rclcpp_action::ResultCode::SUCCEEDED:
-      current_status_ = "success";
-      publish_status(current_status_);
-      RCLCPP_INFO(get_logger(), "Navigation succeeded");
+      if (!has_valid_pose()) {
+        current_status_ = "failed";
+        publish_status(current_status_ + "|goal verification skipped: odom unavailable");
+        RCLCPP_ERROR(get_logger(), "Navigation succeeded but odom was unavailable for goal verification");
+        break;
+      }
+      {
+        const double distance = distance_to_goal_2d();
+        if (distance <= goal_tolerance_) {
+          current_status_ = "success";
+          publish_status(
+            current_status_ + "|goal verified distance_m=" + std::to_string(distance) +
+            " tolerance_m=" + std::to_string(goal_tolerance_));
+          RCLCPP_INFO(
+            get_logger(),
+            "Navigation succeeded and goal verified: distance=%.3f tolerance=%.3f",
+            distance,
+            goal_tolerance_);
+        } else {
+          current_status_ = "failed";
+          publish_status(
+            current_status_ + "|goal verification failed distance_m=" + std::to_string(distance) +
+            " tolerance_m=" + std::to_string(goal_tolerance_));
+          RCLCPP_ERROR(
+            get_logger(),
+            "Navigation reached action success but failed goal verification: distance=%.3f tolerance=%.3f",
+            distance,
+            goal_tolerance_);
+        }
+      }
       break;
     case rclcpp_action::ResultCode::ABORTED:
       current_status_ = "aborted";
@@ -193,6 +222,7 @@ void AutonomousWalk::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
   current_pose_.header = msg->header;
   current_pose_.pose = msg->pose.pose;
+  has_odom_ = true;
 }
 
 void AutonomousWalk::set_goal_callback(
@@ -228,6 +258,18 @@ void AutonomousWalk::publish_status(const std::string & status)
   std_msgs::msg::String msg;
   msg.data = status;
   status_pub_->publish(msg);
+}
+
+double AutonomousWalk::distance_to_goal_2d() const
+{
+  const double dx = current_pose_.pose.position.x - current_goal_.pose.position.x;
+  const double dy = current_pose_.pose.position.y - current_goal_.pose.position.y;
+  return std::sqrt((dx * dx) + (dy * dy));
+}
+
+bool AutonomousWalk::has_valid_pose() const
+{
+  return has_odom_;
 }
 
 } // namespace autonomous_walk

@@ -9,8 +9,14 @@
 #include <fstream>   
 #include <iomanip>   
 #include <cmath>
+#include <atomic>
+#include <thread>
+#include <utility>
 #include <rclcpp/rclcpp.hpp> //ros2节点相关
 #include <std_msgs/msg/bool.hpp>  
+#include <std_msgs/msg/float32_multi_array.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <point_cloud_processing_pkg/srv/wuliaoprocess.hpp>   //添加服务文件
 #include <array>
 
@@ -28,6 +34,43 @@ using namespace std;
 using Wuliaoprocess = point_cloud_processing_pkg::srv::Wuliaoprocess;
 using ExcavationInfo = tra_planning::msg::ExcavationInfo;
 namespace fs = std::filesystem;
+
+namespace
+{
+rclcpp::QoS debugQos()
+{
+    return rclcpp::QoS(1).reliable().transient_local();
+}
+
+std_msgs::msg::Float32MultiArray toFloatArray(const Eigen::ArrayXXd& values)
+{
+    std_msgs::msg::Float32MultiArray msg;
+    msg.data.reserve(values.size());
+    for (Eigen::Index index = 0; index < values.size(); ++index) {
+        msg.data.push_back(static_cast<float>(values(index)));
+    }
+    return msg;
+}
+
+nav_msgs::msg::Path toPathMessage(
+    const Eigen::MatrixXd& trajectory,
+    const std::string& frame_id)
+{
+    nav_msgs::msg::Path msg;
+    msg.header.frame_id = frame_id;
+    msg.poses.reserve(static_cast<size_t>(trajectory.cols()));
+    for (Eigen::Index index = 0; index < trajectory.cols(); ++index) {
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header.frame_id = frame_id;
+        pose.pose.position.x = trajectory(0, index);
+        pose.pose.position.y = trajectory(1, index);
+        pose.pose.position.z = trajectory.rows() > 2 ? trajectory(2, index) : 0.0;
+        pose.pose.orientation.w = 1.0;
+        msg.poses.push_back(pose);
+    }
+    return msg;
+}
+}  // namespace
   
 int g_obj_choose = 7;  //多目标函数选择
 
@@ -74,6 +117,12 @@ public:
             std::bind(&SpeedServer::startCallback, this, std::placeholders::_1)
         );
 
+        cancel_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+            "digging/cancel",
+            10,
+            std::bind(&SpeedServer::cancelCallback, this, std::placeholders::_1)
+        );
+
         // 3.创建话题发布完成信号，告诉plccontrol可执行后续操作
         finish_pub_ = this->create_publisher<std_msgs::msg::Bool>(
             "digging/perception_finish",
@@ -87,7 +136,62 @@ public:
   			rclcpp::QoS(1).reliable().transient_local()
         );
 
+        seg1_path_pub_ = this->create_publisher<nav_msgs::msg::Path>(
+            "digging/debug/segment1_path",
+            debugQos());
+        seg2_path_pub_ = this->create_publisher<nav_msgs::msg::Path>(
+            "digging/debug/segment2_path",
+            debugQos());
+        seg3_path_pub_ = this->create_publisher<nav_msgs::msg::Path>(
+            "digging/debug/segment3_path",
+            debugQos());
+        time_axis_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            "digging/debug/time_axis",
+            debugQos());
+        vgan_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            "digging/debug/vgan_result",
+            debugQos());
+        vrope_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            "digging/debug/vrope_result",
+            debugQos());
+        gan_len_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            "digging/debug/gan_len",
+            debugQos());
+        rope_len_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            "digging/debug/rope_len",
+            debugQos());
+        optimization_candidate_path_pub_ = this->create_publisher<nav_msgs::msg::Path>(
+            "digging/debug/optimization_candidate_path",
+            debugQos());
+        optimization_metrics_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            "digging/debug/optimization_metrics",
+            debugQos());
+
 		RCLCPP_INFO(this->get_logger(), "挖掘计算节点已启动，等待动作逻辑指令");
+        set_optimization_cancel_flag(&cancel_requested_);
+        set_optimization_debug_callback(
+            [this](const Eigen::MatrixXd& candidate_path,
+                   double objective_value,
+                   double bucket_fill_rate,
+                   double tf_value,
+                   unsigned long eval_count) {
+                this->publishOptimizationDebugState(
+                    candidate_path,
+                    objective_value,
+                    bucket_fill_rate,
+                    tf_value,
+                    eval_count);
+            });
+    }
+
+    ~SpeedServer() override
+    {
+        clear_optimization_debug_callback();
+        cancel_requested_.store(true);
+        request_force_stop_current_optimizer();
+        if (planning_thread_.joinable()) {
+            planning_thread_.join();
+        }
     }
 
 private:
@@ -102,8 +206,22 @@ private:
 	
 	rclcpp::Client<Wuliaoprocess>::SharedPtr prs_client_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr start_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr cancel_sub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr finish_pub_;
 	rclcpp::Publisher<ExcavationInfo>::SharedPtr excavation_end_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr seg1_path_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr seg2_path_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr seg3_path_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr time_axis_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr vgan_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr vrope_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr gan_len_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr rope_len_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr optimization_candidate_path_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr optimization_metrics_pub_;
+    std::atomic_bool cancel_requested_{false};
+    std::atomic_bool planning_active_{false};
+    std::thread planning_thread_;
 
 	// 1) 内部逻辑，plccontrol发来了start=True（订阅回调）
     void startCallback(const std_msgs::msg::Bool::SharedPtr msg)
@@ -113,15 +231,69 @@ private:
             return;
         }
 
-        RCLCPP_INFO(this->get_logger(), "收到perception_start=True，开始请求点云拟合服务...");
-
-        // 2) 请求PRS数据，触发感知计算
-        bool ok = request_prs_data();
-        if (!ok) {
-            RCLCPP_ERROR(this->get_logger(), "PRS数据拉取失败，请检查通讯!!!");
+        if (planning_active_.exchange(true)) {
+            RCLCPP_WARN(this->get_logger(), "上一轮挖掘规划仍在执行，忽略新的 perception_start");
             return;
         }
+        cancel_requested_.store(false);
+        if (planning_thread_.joinable()) {
+            planning_thread_.join();
+        }
+        RCLCPP_INFO(this->get_logger(), "收到perception_start=True，启动挖掘规划线程...");
+        planning_thread_ = std::thread(&SpeedServer::runPlanningCycle, this);
+    }
 
+    void cancelCallback(const std_msgs::msg::Bool::SharedPtr msg)
+    {
+        if (!msg->data) {
+            return;
+        }
+        cancel_requested_.store(true);
+        request_force_stop_current_optimizer();
+        RCLCPP_WARN(this->get_logger(), "收到 dig cancel，请求中断 trajectory_planner");
+    }
+
+    void runPlanningCycle()
+    {
+        struct PlanningGuard {
+            std::atomic_bool& flag;
+            ~PlanningGuard()
+            {
+                flag.store(false);
+            }
+        } planning_guard{planning_active_};
+        try {
+            if (planningCanceled("before_prs_request")) {
+                return;
+            }
+
+            RCLCPP_INFO(this->get_logger(), "开始请求点云拟合服务...");
+            bool ok = request_prs_data();
+            if (!ok) {
+                if (!cancel_requested_.load()) {
+                    RCLCPP_ERROR(this->get_logger(), "PRS数据拉取失败，请检查通讯!!!");
+                }
+                return;
+            }
+            if (planningCanceled("after_prs_request")) {
+                return;
+            }
+
+            std_msgs::msg::Bool done_msg;
+            done_msg.data = true;
+            finish_pub_->publish(done_msg);
+            RCLCPP_INFO(this->get_logger(), "规划结束，已发布 perception_finish=True");
+
+            initialize_speed_data();
+        } catch (const std::exception& exc) {
+            if (!cancel_requested_.load()) {
+                RCLCPP_ERROR(this->get_logger(), "trajectory_planner 异常退出: %s", exc.what());
+            }
+        } catch (...) {
+            if (!cancel_requested_.load()) {
+                RCLCPP_ERROR(this->get_logger(), "trajectory_planner 未知异常退出");
+            }
+        }
     }
 
     bool request_prs_data()
@@ -130,6 +302,9 @@ private:
         
         // 阻塞当前线程，等待服务可用（超时1秒循环等待）
         while (!prs_client_->wait_for_service(std::chrono::seconds(1))) {
+            if (planningCanceled("wait_prs_service")) {
+                return false;
+            }
             if (!rclcpp::ok()) {
                 RCLCPP_ERROR(this->get_logger(), "等待服务过程中通讯被中断");
                 return false;
@@ -140,64 +315,60 @@ private:
         // 发送请求
         auto request = std::make_shared<Wuliaoprocess::Request>();
 		//async_send_request(...)是异步调用（非阻塞），发出请求后立即返回true，服务返回后才会调用回调函数处理结果
-		prs_client_->async_send_request(
-			request,
-			[this](rclcpp::Client<Wuliaoprocess>::SharedFuture future)
-			{
-				auto response = future.get();
+        auto future = prs_client_->async_send_request(request);
+        while (future.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+            if (planningCanceled("wait_prs_response")) {
+                return false;
+            }
+        }
+        auto response = future.get();
+        if (planningCanceled("prs_response_ready")) {
+            return false;
+        }
 
-				if (!response->issuccess) {
-					RCLCPP_ERROR(this->get_logger(), "wuliaoprocess返回issuccess=false");
-					prs_data_valid_ = false;
-					return;
-				}				
+        if (!response->issuccess) {
+            RCLCPP_ERROR(this->get_logger(), "wuliaoprocess返回issuccess=false");
+            prs_data_valid_ = false;
+            return false;
+        }
 
-				prs_coefficients_ = response->prs_coefficients;
-				bounding_boxes_ = response->bounding_boxes;
-				prs_data_valid_ = true;
-				RCLCPP_INFO(this->get_logger(), "得到PRS系数（%zu个）和边界框（%zu个）",prs_coefficients_.size(), bounding_boxes_.size());
-				
-				// 判断数量是否合适
-				if (prs_coefficients_.size() != 28 || bounding_boxes_.size() != 6) {
-					// 分别提示具体异常项
-					if (prs_coefficients_.size() != 28) {
-						RCLCPP_WARN(this->get_logger(), "PRS数量异常（应为28个，实际%zu个），无法解析", prs_coefficients_.size());
-					}
-					if (bounding_boxes_.size() != 6) {
-						RCLCPP_WARN(this->get_logger(), "边界框元素数量异常（应为6个，实际%zu个），无法解析", bounding_boxes_.size());
-					}
-					// 终止后续解析（根据上下文用return/continue等）
-					return;
-				}
+        prs_coefficients_ = response->prs_coefficients;
+        bounding_boxes_ = response->bounding_boxes;
+        prs_data_valid_ = true;
+        RCLCPP_INFO(this->get_logger(), "得到PRS系数（%zu个）和边界框（%zu个）",prs_coefficients_.size(), bounding_boxes_.size());
 
-				// 输出边界框具体信息（标注每个值的含义）
-				
-				// 边界框6个元素含义：xmin, xmax, ymin, ymax, zmin, zmax
-				double xmin = bounding_boxes_[0];
-				double xmax = bounding_boxes_[1];
-				double ymin = bounding_boxes_[2];
-				double ymax = bounding_boxes_[3];
-				double zmin = bounding_boxes_[4];
-				double zmax = bounding_boxes_[5];
+        if (prs_coefficients_.size() != 28 || bounding_boxes_.size() != 6) {
+            if (prs_coefficients_.size() != 28) {
+                RCLCPP_WARN(this->get_logger(), "PRS数量异常（应为28个，实际%zu个），无法解析", prs_coefficients_.size());
+            }
+            if (bounding_boxes_.size() != 6) {
+                RCLCPP_WARN(this->get_logger(), "边界框元素数量异常（应为6个，实际%zu个），无法解析", bounding_boxes_.size());
+            }
+            return false;
+        }
 
-				// 设置输出精度（保留3位小数，更易读）
-				RCLCPP_INFO(this->get_logger(), "边界框详细信息（单位：m）：");
-				RCLCPP_INFO(this->get_logger(), "  X轴范围：min=%.3f, max=%.3f", xmin, xmax);
-				RCLCPP_INFO(this->get_logger(), "  Y轴范围：min=%.3f, max=%.3f", ymin, ymax);
-				RCLCPP_INFO(this->get_logger(), "  Z轴范围：min=%.3f, max=%.3f", zmin, zmax);
+        double xmin = bounding_boxes_[0];
+        double xmax = bounding_boxes_[1];
+        double ymin = bounding_boxes_[2];
+        double ymax = bounding_boxes_[3];
+        double zmin = bounding_boxes_[4];
+        double zmax = bounding_boxes_[5];
 
-				// 2) 请求PRS数据，发布完成信号 
-				std_msgs::msg::Bool done_msg;
-				done_msg.data = true;
-				finish_pub_->publish(done_msg);
-				RCLCPP_INFO(this->get_logger(), "规划结束，已发布 perception_finish=True");
-
-				// 自动执行轨迹规划 
-				initialize_speed_data();
-
-			} 
-		);
+        RCLCPP_INFO(this->get_logger(), "边界框详细信息（单位：m）：");
+        RCLCPP_INFO(this->get_logger(), "  X轴范围：min=%.3f, max=%.3f", xmin, xmax);
+        RCLCPP_INFO(this->get_logger(), "  Y轴范围：min=%.3f, max=%.3f", ymin, ymax);
+        RCLCPP_INFO(this->get_logger(), "  Z轴范围：min=%.3f, max=%.3f", zmin, zmax);
 		return true; //发出请求成功				
+    }
+
+    bool planningCanceled(const char* stage)
+    {
+        if (!cancel_requested_.load()) {
+            return false;
+        }
+        request_force_stop_current_optimizer();
+        RCLCPP_WARN(this->get_logger(), "trajectory_planner 已取消：%s", stage);
+        return true;
     }
 
 	// 从 1 行 CSV（形如 "1.0,2.0,3.0"）中读取首尾两个数值
@@ -254,6 +425,10 @@ private:
     // 规划失败时：尝试从历史 CSV 回退发布上一次成功规划的挖掘起止点
     void handle_plan_failure(const std::string &reason)
     {
+        if (cancel_requested_.load()) {
+            RCLCPP_WARN(this->get_logger(), "轨迹规划已取消，跳过失败回退发布");
+            return;
+        }
         RCLCPP_WARN(this->get_logger(),
                     "本次轨迹规划失败：%s", reason.c_str());
 
@@ -296,10 +471,56 @@ private:
                     end_push, end_lift, start_push, start_lift);
     }
 
+    void publishDebugOutputs(
+        const Eigen::MatrixXd& seg1,
+        const Eigen::MatrixXd& seg2,
+        const Eigen::MatrixXd& seg3,
+        const Eigen::ArrayXXd& time_axis,
+        const Eigen::ArrayXXd& vgan_result,
+        const Eigen::ArrayXXd& vrope_result,
+        const Eigen::ArrayXXd& gan_len,
+        const Eigen::ArrayXXd& rope_len)
+    {
+        const std::string frame_id = "map";
+        seg1_path_pub_->publish(toPathMessage(seg1, frame_id));
+        seg2_path_pub_->publish(toPathMessage(seg2, frame_id));
+        seg3_path_pub_->publish(toPathMessage(seg3, frame_id));
+        time_axis_pub_->publish(toFloatArray(time_axis));
+        vgan_pub_->publish(toFloatArray(vgan_result));
+        vrope_pub_->publish(toFloatArray(vrope_result));
+        gan_len_pub_->publish(toFloatArray(gan_len));
+        rope_len_pub_->publish(toFloatArray(rope_len));
+    }
+
+    void publishOptimizationDebugState(
+        const Eigen::MatrixXd& candidate_path,
+        double objective_value,
+        double bucket_fill_rate,
+        double tf_value,
+        unsigned long eval_count)
+    {
+        if (cancel_requested_.load()) {
+            return;
+        }
+        const std::string frame_id = "map";
+        optimization_candidate_path_pub_->publish(toPathMessage(candidate_path, frame_id));
+        std_msgs::msg::Float32MultiArray metrics;
+        metrics.data = {
+            static_cast<float>(eval_count),
+            static_cast<float>(objective_value),
+            static_cast<float>(bucket_fill_rate),
+            static_cast<float>(tf_value),
+        };
+        optimization_metrics_pub_->publish(std::move(metrics));
+    }
+
 
 	void initialize_speed_data()
 	{
-		excavator_position[3] = -1.0 * De_angle * M_PI / 180.0;              //yaw， 偏转∠
+			if (planningCanceled("initialize_speed_data_enter")) {
+				return;
+			}
+			excavator_position[3] = -1.0 * De_angle * M_PI / 180.0;              //yaw， 偏转∠
 		excavator_position[4] = PRSDegree;             //PRSDegree 点云面的拟合多项式系数
 
 
@@ -332,8 +553,11 @@ private:
 		double s_star = std::numeric_limits<double>::quiet_NaN();
 		double A_star = std::numeric_limits<double>::quiet_NaN();
 
-		for(double s = s_lo + ds; !bracketed && s <= s_hi; s += ds){
-			double f = z_at_s(s);
+			for(double s = s_lo + ds; !bracketed && s <= s_hi; s += ds){
+				if (planningCanceled("search_material_intersection")) {
+					return;
+				}
+				double f = z_at_s(s);
 			if (std::abs(f) < 1e-6 || f0 * f <= 0.0) { s0 = s - ds; f0 = z_at_s(s0); s1 = s; f1 = f; bracketed = true; }
 			else { f0 = f; }
 		}
@@ -399,22 +623,22 @@ private:
 		
 		// ======================== 重置起点结束 =========================== //
 
-		// // 前两段规划
-		// Eigen::MatrixXd seg1, seg2;
-		// ArrayXXd t1, t2;
-		// plan_first_two_segments(
-		// 	excavator_position[0],      // base_x
-		// 	excavator_position[1],      // base_y
-		// 	0.0,                        // base_z（以地面为 0）
-		// 	excavator_position[3],      // yaw
-		// 	A_star,
-		// 	pp,                         // 时间步长（项目里 pp 一直代表时间间隔）
-		// 	B0_deg_seg01,
-		// 	h0_seg01,
-		// 	dig_T2,                        // 段2时长 T2 ，第二段时间
-		// 	v23x,                        // 段2末速 v_end（与第三段 v23x=1.0 接轨）
-		// 	seg1, t1, seg2, t2
-		// );
+		// 前两段规划：用于实时调试可视化与阶段联调
+		Eigen::MatrixXd seg1, seg2;
+		ArrayXXd t1, t2;
+		plan_first_two_segments(
+			excavator_position[0],      // base_x
+			excavator_position[1],      // base_y
+			0.0,                        // base_z（以地面为 0）
+			excavator_position[3],      // yaw
+			A_star,
+			pp,                         // 时间步长（项目里 pp 一直代表时间间隔）
+			B0_deg_seg01,
+			h0_seg01,
+			dig_T2,                     // 段2时长
+			v23x,                       // 段2末速
+			seg1, t1, seg2, t2
+		);
 
 
 		// ----------------------------------------------------------------------------------//
@@ -533,9 +757,12 @@ private:
 		int succeeded_trial = -1;   // 新增：记录成功的是第几次
 
 		//在尝试次数内进行循环迭代
-		for (int trial = 1; trial <= max_trials; ++trial)
-		{
-			// 第1次用原始初值；后续在“上一轮初值”基础上做 ±5% 扰动
+			for (int trial = 1; trial <= max_trials; ++trial)
+			{
+				if (planningCanceled("optimization_retry_loop")) {
+					return;
+				}
+				// 第1次用原始初值；后续在“上一轮初值”基础上做 ±5% 扰动
 			if (trial > 1) {
 				for (int i = 0; i < 5; ++i) {
 					double base  = std::abs(init_try[i]);
@@ -557,6 +784,9 @@ private:
 			try {
 				// 调用优化
 				shove_optimization(opt_var_num, poly_x, NULL, lb, ub, excavator_position);
+				if (planningCanceled("optimization_running")) {
+					return;
+				}
 
 				// 只在可行时宣布“最优”
 				if (!plan_successful) {
@@ -584,9 +814,15 @@ private:
 		}
 
 		if (!solved) {
+			if (planningCanceled("optimization_not_solved")) {
+				return;
+			}
 			std::cout << "已重试 " << max_trials << " 次仍未成功，停止规划。" << std::endl;
 			handle_plan_failure("多次扰动优化仍未获得可行解");
 			return ; // 不再执行后续流程
+		}
+		if (planningCanceled("after_optimization_success")) {
+			return;
 		}
 		std::cout << "【最终采用第 " << succeeded_trial << " 次优化结果】" << std::endl;  // 新增
 		// =========================================================
@@ -606,6 +842,13 @@ private:
 					MatrixXd(), MatrixXd(), MatrixXd(), 0,
 					vgan_result, vrope_result,
 					&gan_len, &rope_len, &gan_enc, &rope_enc);
+		if (planningCanceled("after_velocity_generation")) {
+			return;
+		}
+
+        ArrayXXd seg3_time_axis;
+        Eigen::MatrixXd seg3 = build_tip_trajectory_global(poly_x, excavator_position, &seg3_time_axis);
+        publishDebugOutputs(seg1, seg2, seg3, seg3_time_axis, vgan_result, vrope_result, gan_len, rope_len);
 
 
 		// -------------------------数据保存----------------------------- //
@@ -718,9 +961,9 @@ private:
         }
 
         // 6) 推压/提升 长度 + 编码器 直接写第三段
-        auto dump_1xN = [&csv_dir](const char* fname, const Eigen::ArrayXXd& a){
-            std::ofstream f((csv_dir / fname).string());
-            for (int i = 0; i < a.cols(); ++i) {
+	        auto dump_1xN = [&csv_dir](const char* fname, const Eigen::ArrayXXd& a){
+	            std::ofstream f((csv_dir / fname).string());
+	            for (int i = 0; i < a.cols(); ++i) {
                 f << a(0, i);
                 if (i + 1 < a.cols()) f << ",";
             }
@@ -737,12 +980,15 @@ private:
         std::cout << "[推压] 长度范围: " << gan_len.minCoeff()  << " ~ " << gan_len.maxCoeff()
                   << " m, 编码器范围: " << gan_enc.minCoeff()  << " ~ " << gan_enc.maxCoeff()
                   << " cnt, 速度范围: " << vgan_result.minCoeff()  << " ~ " << vgan_result.maxCoeff()<< " m/s\n";
-        std::cout << "[提升] 绳长范围: " << rope_len.minCoeff() << " ~ " << rope_len.maxCoeff()
-                  << " m, 编码器范围: " << rope_enc.minCoeff() << " ~ " << rope_enc.maxCoeff()
-                  << " cnt, 速度范围: " << vrope_result.minCoeff()  << " ~ " << vrope_result.maxCoeff()<< " m/s\n";
-	
-		publish_excavation_end_lengths(gan_len, rope_len);
-	}
+	        std::cout << "[提升] 绳长范围: " << rope_len.minCoeff() << " ~ " << rope_len.maxCoeff()
+	                  << " m, 编码器范围: " << rope_enc.minCoeff() << " ~ " << rope_enc.maxCoeff()
+	                  << " cnt, 速度范围: " << vrope_result.minCoeff()  << " ~ " << vrope_result.maxCoeff()<< " m/s\n";
+		if (planningCanceled("before_publish_excavation_end")) {
+			return;
+		}
+		
+			publish_excavation_end_lengths(gan_len, rope_len);
+		}
 
 	void publish_excavation_end_lengths(const Eigen::ArrayXXd& push_lengths,
 											const Eigen::ArrayXXd& lift_lengths)

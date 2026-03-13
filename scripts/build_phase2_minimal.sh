@@ -14,6 +14,7 @@ colcon --log-base log_phase2 build \
   --packages-select \
     integrated_mission_interfaces \
     mission_dispatcher \
+    mission_operator_hmi \
     plc_adapter \
     mobility_planner_core \
     excavation_planner_core \

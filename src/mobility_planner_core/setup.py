@@ -21,6 +21,9 @@ setup(
         'console_scripts': [
             'mobility_action_server = mobility_planner_core.action_server:main',
             'mock_nav2_server = mobility_planner_core.mock_nav2_server:main',
+            'lite_slam_swing_angle_bridge = mobility_planner_core.lite_slam_swing_angle_bridge:main',
+            'material_boundary_extractor = mobility_planner_core.material_boundary_extractor:main',
+            'material_target_planner = mobility_planner_core.material_target_planner:main',
         ],
     },
 )
