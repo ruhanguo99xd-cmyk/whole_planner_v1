@@ -176,7 +176,7 @@ flowchart LR
 
 最近一轮仓库内验证记录：
 
-- `scripts/build_phase2_minimal.sh`：通过
+- `scripts/build_workspace.sh`：通过
 - HMI 增量构建：`12 packages finished`
 - `mission_operator_hmi` 单测：`9 tests, 0 errors, 0 failures`
 - GUI 启动探针：通过
@@ -186,10 +186,10 @@ flowchart LR
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-bash scripts/build_phase2_minimal.sh
-colcon --log-base log_hmi_iter test --build-base build_hmi_iter --install-base install_hmi_iter --packages-select mission_operator_hmi
-colcon --log-base log_hmi_iter test-result --test-result-base build_hmi_iter --all --verbose
-source install_hmi_iter/setup.bash
+bash scripts/build_workspace.sh
+colcon --log-base log_install_fix test --build-base build --install-base install --packages-select mission_operator_hmi
+colcon --log-base log_install_fix test-result --test-result-base build --all --verbose
+bash -lc 'source install/setup.bash'
 ros2 launch mission_bringup phase2_real.launch.py -s
 ```
 
@@ -212,34 +212,55 @@ ros2 launch mission_bringup phase2_real.launch.py -s
 
 ## 快速开始
 
-构建：
+标准构建：
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-bash scripts/build_phase2_minimal.sh
+bash scripts/build_workspace.sh
 ```
 
-启动主链：
+支持的最终运行版本不超过 3 个：
+
+- `mock`
+  - 最小闭环验证
+- `integrated`
+  - 完整联调主链
+- `hmi`
+  - 单独启动统一上位机
+
+运行 `mock`：
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_phase2/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py
+bash scripts/run_profile.sh mock
 ```
 
-启动统一上位机：
+运行 `integrated`：
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_hmi_iter/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py launch_operator_hmi:=true
+bash scripts/run_profile.sh integrated
+```
+
+运行 `hmi`：
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/run_profile.sh hmi
+```
+
+如果要在完整联调主链里同时带上上位机：
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 ```
 
 提交 demo 任务：
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
 

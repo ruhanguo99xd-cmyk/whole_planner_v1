@@ -17,63 +17,96 @@ sudo apt-get update
 sudo apt-get install -y libnlopt-dev
 ```
 
-## Phase 1：mock 最小闭环
+## 最终支持的运行版本
+
+当前建议只保留 3 个正式运行版本：
+
+1. `mock`
+   - 最小闭环验证
+2. `integrated`
+   - 完整联调主链
+3. `hmi`
+   - 单独启动统一上位机
+
+统一入口脚本：
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/build_workspace.sh
+bash scripts/run_profile.sh mock
+bash scripts/run_profile.sh integrated
+bash scripts/run_profile.sh hmi
+```
+
+说明：
+- `scripts/build_phase2_minimal.sh`
+- `scripts/run_phase1_mock.sh`
+- `scripts/run_phase2_real.sh`
+
+这 3 个旧脚本仍然保留，但现在只作为兼容包装，内部会转发到新的标准入口。
+
+文档里如果看到 `install_phase2`、`install_pointcloud_ci` 之类路径，那是历史验证记录保留下来的旧前缀。
+当前日常使用请优先统一到：
+
+- `install/setup.bash`
+- `bash scripts/build_workspace.sh`
+- `bash scripts/run_profile.sh <mock|integrated|hmi>`
+
+## 运行版本 1：mock 最小闭环
 
 ### 构建
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-colcon build --packages-select integrated_mission_interfaces mission_dispatcher plc_adapter mobility_planner_core excavation_planner_core mission_bringup
-source install/setup.bash
+bash scripts/build_workspace.sh
 ```
 
 ### 启动
 ```bash
-ros2 launch mission_bringup phase1_mock.launch.py
+bash scripts/run_profile.sh mock
 ```
 
 ### 提交 demo 任务
 ```bash
+source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
 
 ### 期望日志
 - `IDLE -> WALK_PREP -> WALKING -> TRANSITION -> DIG_PREP -> DIGGING -> IDLE`
 
-## Phase 2：最小真实链
+## 运行版本 2：integrated 完整联调主链
 
 ### 构建
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-bash scripts/build_phase2_minimal.sh
+bash scripts/build_workspace.sh
 ```
 
-`build_phase2_minimal.sh` 会先检查系统里是否已安装 `libnlopt-dev`，缺失时直接退出。
+`build_workspace.sh` 会先检查系统里是否已安装 `libnlopt-dev`，缺失时直接退出。
 
 ### 启动
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-bash scripts/run_phase2_real.sh
+bash scripts/run_profile.sh integrated
 ```
 
 ### 提交 demo 任务
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
 
-### 启动统一上位机
+### 运行版本 3：hmi 单独上位机
 单独启动：
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 run mission_operator_hmi integrated_operator_hmi
+bash scripts/run_profile.sh hmi
 ```
 
-随 `phase2_real` 一起启动：
+### integrated 模式里同时带上上位机
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py launch_operator_hmi:=true
+bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 ```
 
 统一上位机当前提供：

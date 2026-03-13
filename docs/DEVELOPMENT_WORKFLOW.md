@@ -117,14 +117,14 @@ git commit -m "docs: update runbook and interface notes for hmi"
 cd /home/ruhanguo/shovel_robot/whole_planner_v1_dev_workspace
 python3 -m py_compile src/mission_operator_hmi/mission_operator_hmi/helpers.py src/mission_operator_hmi/mission_operator_hmi/integrated_operator_hmi.py
 PYTHONPATH=src/mission_operator_hmi:$PYTHONPATH python3 -m pytest -q src/mission_operator_hmi/test/test_helpers.py
-bash scripts/build_phase2_minimal.sh
+bash scripts/build_workspace.sh
 ```
 
 如果改了调度或规划主链，再补：
 
 ```bash
-colcon --log-base log_phase2 test --build-base build_phase2 --install-base install_phase2 --packages-select mission_dispatcher plc_adapter mobility_planner_core excavation_planner_core mission_operator_hmi
-colcon --log-base log_phase2 test-result --all --verbose
+colcon --log-base log_install_fix test --build-base build --install-base install --packages-select mission_dispatcher plc_adapter mobility_planner_core excavation_planner_core mission_operator_hmi
+colcon --log-base log_install_fix test-result --all --verbose
 ```
 
 ## 避免的操作

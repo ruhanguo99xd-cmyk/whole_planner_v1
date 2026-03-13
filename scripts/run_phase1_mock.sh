@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 cd "$(dirname "$0")/.."
-colcon build --packages-up-to mission_bringup
-source install/setup.bash
-ros2 launch mission_bringup phase1_mock.launch.py
+echo "[deprecated] use: bash scripts/run_profile.sh mock"
+exec bash scripts/run_profile.sh mock "$@"
