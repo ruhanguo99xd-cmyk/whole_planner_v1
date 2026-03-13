@@ -36,6 +36,82 @@
   - 行走页支持地图点选目标
   - 挖掘页支持实时轨迹和优化中间态可视化
 
+## 系统架构图
+
+```mermaid
+flowchart TB
+    EXT[外部/HMI/调度系统] --> SUBMIT[/mission_dispatcher/submit_mission]
+    EXT --> START[/mission_dispatcher/start]
+    EXT --> STOP[/mission_dispatcher/stop]
+    EXT --> RECOVER[/mission_dispatcher/recover]
+
+    PLC[plc_adapter\n/plc/status] --> DISP[mission_dispatcher\n上层任务调度]
+
+    SUBMIT --> DISP
+    START --> DISP
+    STOP --> DISP
+    RECOVER --> DISP
+
+    DISP -->|WalkMission START/STOP/CANCEL| WACT[mobility_action_server]
+    DISP -->|DigMission START/STOP/CANCEL| DACT[excavation_action_server]
+
+    DISP -->|use_material_target=true| MTP[/mobility/compute_material_target]
+    MTP --> MTP_NODE[material_target_planner]
+
+    MTP_NODE -->|需要点云边界时| EXTSVC[/mobility/extract_material_boundary]
+    EXTSVC --> EXT_NODE[material_boundary_extractor]
+    PC[PointCloud2] --> EXT_NODE
+
+    WACT -->|service| AW[autonomous_walk]
+    AW --> NAV[mock_nav2 / nav2]
+    NAV --> AW
+    AW -->|legacy status| WACT
+    WACT -->|/mobility/status| DISP
+
+    DACT -->|/dig/start /dig/stop| DORCH[legacy_dig_planner_orchestrator]
+    DORCH --> TRAJ[trajectory_planner]
+    DORCH --> LOAD[load]
+    DORCH --> RET[return]
+    PRS[prsdata_server] --> TRAJ
+    TRUCK[perceive_truck_server] --> TRAJ
+    ANGLE[lite_slam_swing_angle_bridge\n/lite_slam/swing_angle_deg] --> DORCH
+    DORCH -->|/excavation/status| DACT
+    DACT -->|/excavation/status| DISP
+```
+
+## 启动关系图
+
+```mermaid
+flowchart TB
+    LAUNCH[phase2_real.launch.py] --> PLC[plc_adapter]
+    LAUNCH --> DISP[mission_dispatcher]
+    LAUNCH --> WACT[mobility_action_server]
+    LAUNCH --> MTP[material_target_planner]
+    LAUNCH --> MBE[material_boundary_extractor]
+    LAUNCH --> SWING[lite_slam_swing_angle_bridge]
+    LAUNCH --> DACT[excavation_action_server]
+    LAUNCH --> NAV[mock_nav2_server]
+    LAUNCH --> AW[autonomous_walk]
+
+    LAUNCH --> PRS[prsdata_server]
+    LAUNCH --> TRUCK[perceive_truck_server]
+    LAUNCH --> TRAJ[trajectory_planner]
+    LAUNCH --> LOAD[load]
+    LAUNCH --> RET[return]
+    LAUNCH --> DORCH[legacy_dig_planner_orchestrator]
+
+    MBE -.订阅.-> PCTOPIC[/material/point_cloud]
+    DISP -.调用.-> MTP
+    MTP -.调用.-> MBE
+    DISP -.action.-> WACT
+    DISP -.action.-> DACT
+    WACT -.后端.-> AW
+    DACT -.后端.-> DORCH
+    DORCH -.驱动.-> TRAJ
+    DORCH -.驱动.-> LOAD
+    DORCH -.驱动.-> RET
+```
+
 ## 代码结构
 
 - `src/mission_dispatcher`
