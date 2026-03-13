@@ -228,6 +228,18 @@ bash scripts/build_workspace.sh
 - `hmi`
   - 单独启动统一上位机
 
+这 3 套 profile 和默认工作目录的关系是：
+
+- `mock`
+  - 使用默认 `build/ install/ log/`
+  - 对应 `mock.launch.py`
+- `integrated`
+  - 使用默认 `build/ install/ log/`
+  - 对应 `integrated.launch.py`
+- `hmi`
+  - 使用默认 `install/`
+  - 单独启动统一上位机，不再维护独立的历史安装前缀
+
 运行 `mock`：
 
 ```bash
@@ -263,6 +275,45 @@ cd /home/ruhanguo/shovel_robot/whole_planner_v1
 source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
+
+## 历史目录清理
+
+仓库早期联调阶段曾保留过多套历史目录，例如：
+
+- `build_phase2`
+- `install_phase2`
+- `build_pointcloud_ci`
+- `install_pointcloud_ci`
+- `log_*`
+
+现在这些历史目录已经不再作为正式入口使用。统一入口只保留：
+
+- `build/`
+- `install/`
+- `log/`
+
+如果需要整理旧目录，使用安全归档脚本：
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/clean_legacy_artifacts.sh
+```
+
+先做 `dry-run` 预览；确认后再真正归档：
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/clean_legacy_artifacts.sh --apply
+```
+
+被归档的目录会移动到：
+
+- `.cleanup_archive/<timestamp>/`
+
+这样可以同时满足两件事：
+
+- 不再让旧目录干扰当前运行
+- 需要追溯历史构建产物时仍然能找回
 
 ## 文档入口
 
