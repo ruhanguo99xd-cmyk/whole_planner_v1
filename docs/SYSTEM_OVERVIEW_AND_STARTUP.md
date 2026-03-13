@@ -232,22 +232,18 @@ PointCloud2
 
 ### 10.1 推荐构建
 
-建议优先使用这套安装前缀：
+建议优先使用标准构建入口：
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-colcon --log-base log_pointcloud_ci build \
-  --build-base build_pointcloud_ci \
-  --install-base install_pointcloud_ci \
-  --packages-up-to mission_dispatcher excavation_planner_core plc_adapter mobility_planner_core
+bash scripts/build_workspace.sh
 ```
 
 ### 10.2 启动主系统
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup integrated.launch.py
+bash scripts/run_profile.sh integrated
 ```
 
 启动文件：
@@ -276,7 +272,7 @@ ros2 launch mission_bringup integrated.launch.py
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
+source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
 
@@ -284,9 +280,7 @@ ros2 run mission_dispatcher submit_demo_mission
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py \
-  material_point_cloud_topic:=/your/point_cloud_topic
+bash scripts/run_profile.sh integrated material_point_cloud_topic:=/your/point_cloud_topic
 ```
 
 ### 10.5 点云 frame 不一致时，按机型加载静态外参
@@ -300,8 +294,7 @@ ros2 launch mission_bringup phase2_real.launch.py \
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py \
+bash scripts/run_profile.sh integrated \
   machine_model:=prototype \
   material_point_cloud_topic:=/your/point_cloud_topic
 ```
@@ -315,8 +308,7 @@ ros2 launch mission_bringup phase2_real.launch.py \
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py \
+bash scripts/run_profile.sh integrated \
   material_point_cloud_topic:=/your/point_cloud_topic \
   use_boundary_static_extrinsic:=true \
   boundary_sensor_frame_id:=your_sensor_frame \
@@ -334,7 +326,7 @@ ros2 launch mission_bringup phase2_real.launch.py \
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
+source install/setup.bash
 ros2 run mobility_planner_core material_boundary_extractor
 ```
 
@@ -342,7 +334,7 @@ ros2 run mobility_planner_core material_boundary_extractor
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
+source install/setup.bash
 ros2 run mobility_planner_core material_target_planner --ros-args -p enable_boundary_extractor:=true
 ```
 
@@ -357,16 +349,14 @@ ros2 run mobility_planner_core material_target_planner --ros-args -p enable_boun
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 run mission_operator_hmi integrated_operator_hmi
+bash scripts/run_profile.sh hmi
 ```
 
 随主系统一起启动：
 
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py launch_operator_hmi:=true
+bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 ```
 
 当前统一上位机提供：

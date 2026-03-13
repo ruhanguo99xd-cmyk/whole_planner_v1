@@ -45,8 +45,7 @@ bash scripts/run_profile.sh hmi
 
 这 3 个旧脚本仍然保留，但现在只作为兼容包装，内部会转发到新的标准入口。
 
-文档里如果看到 `install_phase2`、`install_pointcloud_ci` 之类路径，那是历史验证记录保留下来的旧前缀。
-当前日常使用请优先统一到：
+当前日常使用统一到：
 
 - `install/setup.bash`
 - `bash scripts/build_workspace.sh`
@@ -113,10 +112,10 @@ bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 - 推荐 launch 名称已经统一到：
   - `mock.launch.py`
   - `integrated.launch.py`
-- 旧的：
+- 旧的兼容入口：
   - `phase1_mock.launch.py`
   - `phase2_real.launch.py`
- 仍然保留为兼容入口
+仍然保留为兼容入口
 
 统一上位机当前提供：
 - `大规划` 页签：开始/停止/恢复、手动任务表单、示例任务提交、状态事件流
@@ -147,7 +146,7 @@ bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 - 默认启动模式：`launch_legacy_dig_planner:=true`
 - 回退旧链路：
 ```bash
-ros2 launch mission_bringup phase2_real.launch.py launch_legacy_dig:=true launch_legacy_dig_planner:=false
+bash scripts/run_profile.sh integrated launch_legacy_dig:=true launch_legacy_dig_planner:=false
 ```
 - 停靠点规划内部结构：
   - `boundary_fit`
@@ -179,21 +178,22 @@ pkg-config --modversion nlopt
 2. 全量重编译
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-bash scripts/build_phase2_minimal.sh
+bash scripts/build_workspace.sh
 ```
 3. 跑单测
 ```bash
-colcon --log-base log_phase2 test --build-base build_phase2 --install-base install_phase2 --packages-select mission_dispatcher plc_adapter mobility_planner_core excavation_planner_core
-colcon --log-base log_phase2 test-result --all --verbose
+source install/setup.bash
+colcon test --packages-select mission_dispatcher plc_adapter mobility_planner_core excavation_planner_core
+colcon test-result --all --verbose
 ```
 4. 启动真实联调链
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-bash scripts/run_phase2_real.sh
+bash scripts/run_profile.sh integrated
 ```
 5. 提交大规划 demo 任务
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
 6. 期望日志
@@ -211,13 +211,13 @@ ros2 run mission_dispatcher submit_demo_mission
    - `DIGGING -> IDLE`
 7. 抽查 status topic
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 timeout 8s ros2 topic echo /mobility/status --once
 timeout 8s ros2 topic echo /excavation/status --once
 ```
 8. 抽查挖掘实时调试 topic
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 timeout 8s ros2 topic echo /digging/debug/segment3_path --once
 timeout 8s ros2 topic echo /digging/debug/optimization_candidate_path --once
 timeout 8s ros2 topic echo /digging/debug/optimization_metrics --once
@@ -225,7 +225,7 @@ timeout 8s ros2 topic echo /digging/debug/load_rotation_deg --once
 ```
 9. 抽查直接 action 协议
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 1, mission_id: 'check-walk', target_pose: {header: {frame_id: 'map'}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
 ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 2, mission_id: 'check-walk', target_pose: {header: {frame_id: 'map'}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
 ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 3, mission_id: 'check-walk', target_pose: {header: {frame_id: 'map'}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
@@ -242,19 +242,18 @@ ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/D
 1. 启动真实联调链，适当降低 mock 回转速度，给 cancel 留窗口
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_phase2/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py mock_swing_speed_deg_per_sec:=10.0
+bash scripts/run_profile.sh integrated mock_swing_speed_deg_per_sec:=10.0
 ```
 2. 另一个终端提交任务
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
 3. 看到 `DIG_PREP -> DIGGING` 后，触发 stop
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 service call /mission_dispatcher/stop std_srvs/srv/Trigger '{}'
 ```
 4. 期望日志
@@ -270,7 +269,7 @@ ros2 service call /mission_dispatcher/stop std_srvs/srv/Trigger '{}'
 
 ### 通过物料接口提交任务
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
 
@@ -285,7 +284,7 @@ ros2 run mission_dispatcher submit_demo_mission
 ### 单独验证 material target 规划层
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_regression_ci/setup.bash
+source install/setup.bash
 python3 -m pytest -q src/mobility_planner_core/test/test_material_target_planner.py
 ```
 
@@ -305,24 +304,18 @@ python3 -m pytest -q src/mobility_planner_core/test/test_material_target_planner
 1. 构建并安装：
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-colcon --log-base log_pointcloud_ci build \
-  --build-base build_pointcloud_ci \
-  --install-base install_pointcloud_ci \
-  --packages-select mission_operator_hmi mission_bringup
+bash scripts/build_workspace.sh
 ```
 2. 运行单测：
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-colcon --log-base log_pointcloud_ci test \
-  --build-base build_pointcloud_ci \
-  --install-base install_pointcloud_ci \
-  --packages-select mission_operator_hmi
+source install/setup.bash
+colcon test --packages-select mission_operator_hmi
 ```
 3. 启动上位机：
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 run mission_operator_hmi integrated_operator_hmi
+bash scripts/run_profile.sh hmi
 ```
 4. 期望行为：
    - 可以在一个窗口里切换 `大规划 / 行走规划 / 挖掘规划`
@@ -339,7 +332,7 @@ ros2 run mission_operator_hmi integrated_operator_hmi
 - `mission_dispatcher + plc_adapter + mobility_planner_core + excavation_planner_core`: `36 tests`
 
 ### 启用在线点云边界提取
-默认 `phase2_real.launch.py` 已包含：
+默认 `integrated.launch.py` 已包含：
 - `material_boundary_extractor`
 - `material_target_planner(enable_boundary_extractor=true)`
 - `config/perception/material_boundary_extrinsic/<machine_model>.yaml` 自动加载
@@ -356,22 +349,19 @@ ros2 run mission_operator_hmi integrated_operator_hmi
 如需指定真实点云 topic：
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py material_point_cloud_topic:=/your/point_cloud_topic
+bash scripts/run_profile.sh integrated material_point_cloud_topic:=/your/point_cloud_topic
 ```
 
 如果你的点云 frame 和 `current_pose/material_reference_pose` 不是同一个坐标系，推荐先把固定外参写进对应机型 YAML，然后按机型启动：
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py machine_model:=prototype material_point_cloud_topic:=/your/point_cloud_topic
+bash scripts/run_profile.sh integrated machine_model:=prototype material_point_cloud_topic:=/your/point_cloud_topic
 ```
 
 如需临时覆盖 YAML 中的外参，也可以继续在命令行显式传入：
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
-ros2 launch mission_bringup phase2_real.launch.py \
+bash scripts/run_profile.sh integrated \
   material_point_cloud_topic:=/your/point_cloud_topic \
   use_boundary_static_extrinsic:=true \
   boundary_sensor_frame_id:=your_sensor_frame \
@@ -425,14 +415,14 @@ ros2 launch mission_bringup phase2_real.launch.py \
 ### 在线点云边界链快速探针
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
+source install/setup.bash
 ros2 run mobility_planner_core material_boundary_extractor
 ```
 
 另一个终端：
 ```bash
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
-source install_pointcloud_ci/setup.bash
+source install/setup.bash
 ros2 run mobility_planner_core material_target_planner --ros-args -p enable_boundary_extractor:=true
 ```
 
@@ -501,10 +491,10 @@ ros2 run plc_adapter plc_adapter_node --ros-args --params-file /home/ruhanguo/sh
 
 ### `not found ... tra_planning/local_setup.bash`
 - 原因：历史失败构建残留在默认 `install/`
-- 处理：优先使用 `install_phase2`，或手工清理旧 `build/install/log` 后重建
+- 处理：执行 `bash scripts/build_workspace.sh` 重建默认 `build/install/log`，必要时先运行 `bash scripts/clean_legacy_artifacts.sh --apply` 归档历史目录
 
 ### `nlopt` 缺失导致 `tra_planning` 不能编译
-- 现象：`build_phase2_minimal.sh` 直接报缺少 `libnlopt-dev`
+- 现象：`build_workspace.sh` 直接报缺少 `libnlopt-dev`
 - 处理：
 ```bash
 sudo apt-get update
@@ -527,7 +517,7 @@ sudo apt-get install -y libnlopt-dev
   - `load_node`、`return_node` 是否出现 `收到 dig cancel`
 - 处理：
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 topic echo /excavation/status
 ros2 topic echo /lite_slam/swing_angle_deg
 ```
@@ -537,7 +527,7 @@ ros2 topic echo /lite_slam/swing_angle_deg
 
 ### 直接向 walk 发送开始/停止命令
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 1, mission_id: 'manual-walk', target_pose: {header: {frame_id: 'map'}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
 ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 2, mission_id: 'manual-walk', target_pose: {header: {frame_id: 'map'}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
 ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/WalkMission "{command: 3, mission_id: 'manual-walk', target_pose: {header: {frame_id: 'map'}}, constraints_json: '{}', priority: 1, timeout_sec: 5.0}"
@@ -545,7 +535,7 @@ ros2 action send_goal /mobility/execute integrated_mission_interfaces/action/Wal
 
 ### 直接向 dig 发送开始/停止命令
 ```bash
-source install_phase2/setup.bash
+source install/setup.bash
 ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/DigMission "{command: 1, mission_id: 'manual-dig', target_zone: 'bench-A', process_parameters_json: '{}', safety_boundary_json: '{}', priority: 1, timeout_sec: 10.0}"
 ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/DigMission "{command: 2, mission_id: 'manual-dig', target_zone: 'bench-A', process_parameters_json: '{}', safety_boundary_json: '{}', priority: 1, timeout_sec: 10.0}"
 ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/DigMission "{command: 3, mission_id: 'manual-dig', target_zone: 'bench-A', process_parameters_json: '{}', safety_boundary_json: '{}', priority: 1, timeout_sec: 10.0}"

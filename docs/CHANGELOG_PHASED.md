@@ -34,7 +34,7 @@
 - 新增 `/mobility/extract_material_boundary`，供 `material_target_planner` 在线请求边界提取
 - `material_target_planner` 在 `boundary_input.source=pointcloud` 时切到在线边界提取链
 - 在线点云边界链补齐静态外参路径；无 `tf` 且 frame mismatch 时改为直接失败
-- 新增 `config/perception/material_boundary_extrinsic/` 机型外参目录，`phase2_real.launch.py` 改为按 `machine_model` 自动加载 `<machine_model>.yaml`，缺失时回退 `default.yaml`
+- 新增 `config/perception/material_boundary_extrinsic/` 机型外参目录，`integrated.launch.py` 改为按 `machine_model` 自动加载 `<machine_model>.yaml`，缺失时回退 `default.yaml`
 - 新增 `mission_operator_hmi` 统一上位机包
 - 统一上位机支持 `大规划 / 行走规划 / 挖掘规划` 三个页签切换
 - `行走规划` 页签按 `autowalk_hmi_qt` 的成熟布局补齐 `map/global_costmap/local_costmap`、状态灯、手动目标、`cmd_vel` 与履带速度曲线，并新增地图点选目标
@@ -42,7 +42,7 @@
 - `trajectory_planner` 新增 `digging/debug/optimization_candidate_path`、`digging/debug/optimization_metrics`，用于优化过程实时可视化
 - `load` / `return` 新增 `digging/debug/load_rotation_deg`、`digging/debug/return_rotation_deg`
 - `挖掘规划` 页签切换为直接订阅 `digging/debug/*` 实时绘图，不再依赖 CSV 才能可视化，并叠加优化中间候选轨迹
-- `phase2_real.launch.py` 新增 `launch_operator_hmi` 开关
+- `integrated.launch.py` 新增 `launch_operator_hmi` 开关
 - `mobility_planner_core` 新增 `MANIFEST.in`，把 `material_target` 细粒度测试纳入 `colcon test`
 - 验证：`submit_demo_mission` 现在返回 `material_target_planner_v4` 的分层 debug 信息
 - 验证：新增 22 个 `material_target` / `boundary_extractor` 直接单测通过，干净 `colcon test` 回归为 36 项全部通过
