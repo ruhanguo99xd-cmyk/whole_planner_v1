@@ -19,7 +19,7 @@
 - 执行状态统一改为 `/mobility/status`、`/excavation/status`
 - 验证：walk legacy + dig legacy command 跑通一条完整任务链
 - dig 主链新增 `legacy_dig_planner_orchestrator`
-- `phase2_real` 默认切到 `PRSdata_send + trajectory_planner + load + return` 在线规划链
+- `phase2_real` 默认切到 `prsdata_send + trajectory_planner + load + return` 在线规划链
 - 验证：`trajectory_planner/load/return` 已通过 dig action 在线跑通，不再只是编译通过
 - `mission_dispatcher` 接入 `/mobility/compute_material_target`
 - `material_target_planner` 改成三层骨架：`boundary_fit -> work_band -> candidate_evaluation`
@@ -60,7 +60,22 @@
 - `legacy_dig_planner_orchestrator` 新增 `digging/cancel` 发布
 - `trajectory_planner` 新增 worker 线程 + `nlopt_force_stop`
 - `load` / `return` 在等待服务、等待消息和计算循环中响应 cancel
-- 验证：在线联调时，`/mission_dispatcher/stop` 会让 dig 进入 `cancel_requested -> canceled`，且 cancel 后不再生成 `csv_created/load`、`csv_created/return`
+- 验证：在线联调时，`/mission_dispatcher/stop` 会让 dig 进入 `cancel_requested -> canceled`，且 cancel 后不再在 `src/vendor/excavation_planner_core/csv_created/load`、`src/vendor/excavation_planner_core/csv_created/return` 下生成新的本轮产物
+- 行走前新增 `walk_scan` 编排阶段：
+  - 新增模式 `WALK_SCAN_PREP`、`WALK_SCANNING`
+  - `submit_mission` 后先进入扫描建图，再继续停靠点规划和 walk
+  - `material_target` 解析从“提交任务时立即计算”改为“walk_scan 完成后再计算”
+- 新增 `walk_scan_orchestrator`
+  - 服务：`/walk_scan/start`、`/walk_scan/confirm_safety`、`/walk_scan/stop`
+  - 状态：`/walk_scan/status`
+  - 输入：`/lite_slam/swing_angle_deg`、`/map`
+  - 行为：人工确认安全 -> PLC 松闸 -> PLC 启动回转扫描 -> 累计 360 度 -> map 就绪
+- PLC bridge 新增命令服务：
+  - `/plc_bridge/release_swing_brake`
+  - `/plc_bridge/start_walk_scan`
+  - `/plc_bridge/stop_walk_scan`
+- 统一上位机 `大规划` 页新增 `确认行走安全 / 开始扫描` 按钮，并显示 `walk_scan` 状态摘要
+- 验证：`/walk_scan/start -> confirm_safety -> scanning -> mapping` mock 动态链已实际跑通
 
 ## Phase 4
 - 新增架构文档、接口文档、Runbook、阶段变更记录
@@ -68,3 +83,15 @@
 - 固化当前风险与后续解锁策略
 - 补充 dig cancel 在线验收步骤
 - 补充 material target 三层结构说明
+- 新增 `docs/MATERIAL_TARGET_PARAMETER_TABLE.md`，集中说明停靠点规划参数含义、默认值、来源和机型标定建议
+- 新增 `config/planning/material_target/<machine_model>.yaml` 机型停靠点参数目录，`integrated.launch.py` 启动时自动加载
+- 新增 `config/planning/material_target/M001.yaml`，先单独拎出 5 个关键停靠点参数
+- 统一上位机新增“停靠点调参工具”，支持按当前机型载入停靠点 YAML 并一键导出 `material_profile_json`
+- 文档补齐行走前扫描建图流程、接口、启动方法与演示说明
+- 当前回归结果更新为：
+  - `mobility_planner_core`: 29 tests
+  - `mission_dispatcher`: 5 tests
+  - `mission_operator_hmi`: 15 tests
+  - `excavation_planner_core`: 7 tests
+  - `plc_adapter`: 1 test
+  - 合计：57 tests, 0 errors, 0 failures, 0 skipped

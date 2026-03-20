@@ -81,6 +81,9 @@ class SpeedServer : public rclcpp::Node
 public:
     SpeedServer() : Node("trajectory_planner")
     {
+        this->declare_parameter<std::string>("csv_output_root", "csv_created/trajectory_planner");
+        csv_output_root_ = fs::path(this->get_parameter("csv_output_root").as_string());
+
 
 		// 1) declare（声明参数 + 默认值 = parameters.cpp 当前默认值）
 		this->declare_parameter<double>("crowd.ratio", ratio_tuiya);
@@ -219,6 +222,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr rope_len_pub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr optimization_candidate_path_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr optimization_metrics_pub_;
+    fs::path csv_output_root_;
     std::atomic_bool cancel_requested_{false};
     std::atomic_bool planning_active_{false};
     std::thread planning_thread_;
@@ -432,7 +436,7 @@ private:
         RCLCPP_WARN(this->get_logger(),
                     "本次轨迹规划失败：%s", reason.c_str());
 
-        const fs::path csv_dir = fs::path("csv_created") / "trajectory_planner";
+        const fs::path csv_dir = csv_output_root_;
 
         double start_push = 0.0, end_push = 0.0;
         double start_lift = 0.0, end_lift = 0.0;
@@ -895,7 +899,7 @@ private:
         // ====================== 只保留第三段数据保存 ====================== //
 
 
-		const fs::path csv_dir = fs::path("csv_created") / "trajectory_planner";
+		const fs::path csv_dir = csv_output_root_;
 		std::error_code csv_ec;
 		fs::create_directories(csv_dir, csv_ec);
 		if (csv_ec)

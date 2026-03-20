@@ -191,7 +191,8 @@ class LegacyDigPlannerOrchestrator(Node):
                 self._consecutive_no_result = 0
                 excavation_detail = (
                     f'cycle={cycle_index} planning result received '
-                    f'excavation_end_length={info.excavation_end_length:.3f}'
+                    f'end_push_length={info.end_push_length:.3f} '
+                    f'end_lift_length={info.end_lift_length:.3f}'
                 )
                 self._publish_status('digging', excavation_detail)
                 self._publish_bool(self.excavation_start_pub)

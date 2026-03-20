@@ -22,6 +22,9 @@ int main(int argc, char ** argv)
 {
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("return_node");
+    node->declare_parameter<std::string>("csv_output_root", "csv_created/return");
+    const std::filesystem::path csv_output_root = std::filesystem::path(
+        node->get_parameter("csv_output_root").as_string());
 
     using ExcavationInfo = tra_planning::msg::ExcavationInfo;
     using PerceiveTruck = truck_perceive::srv::PerceiveTruck;
@@ -490,7 +493,7 @@ int main(int argc, char ** argv)
 
         // 输出数据
         namespace fs = std::filesystem;
-        const fs::path csv_dir = fs::path("csv_created") / "return";
+        const fs::path csv_dir = csv_output_root;
         std::error_code csv_ec;
         fs::create_directories(csv_dir, csv_ec);
         if (csv_ec)

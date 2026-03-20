@@ -6,6 +6,18 @@ import time
 import numpy as np
 from pathlib import Path
 
+
+def resolve_csv_dir(subdir: str) -> Path:
+    current = Path(__file__).resolve()
+    for ancestor in current.parents:
+        candidate = ancestor / "src" / "vendor" / "excavation_planner_core" / "csv_created" / subdir
+        if candidate.exists():
+            return candidate
+        legacy_candidate = ancestor / "csv_created" / subdir
+        if legacy_candidate.exists():
+            return legacy_candidate
+    return current.parents[3] / "csv_created" / subdir
+
 # ===========================================================
 # 通用函数
 # 通用函数：写入REAL数组
@@ -92,8 +104,7 @@ def quintic_trajectory_planning(s0, st, T, delta_t=0.1):
 # 挖掘功能
 def dig_function(plc):
 
-    PROJECT_ROOT = Path(__file__).resolve().parents[3]
-    CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "trajectory_planner"
+    CSV_DIR = resolve_csv_dir("trajectory_planner")
     gan_path = CSV_DIR / 'gan_enc.csv'
     rope_path = CSV_DIR / 'rope_enc.csv'
     huizhuan_path = CSV_DIR / 'huizhuan_enc.csv'
@@ -157,8 +168,7 @@ def dig_function(plc):
 # 卸料功能
 def xieliao_function(plc):
 
-    PROJECT_ROOT = Path(__file__).resolve().parents[3]
-    CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "load"
+    CSV_DIR = resolve_csv_dir("load")
     gan_path = CSV_DIR / 'load_gan_enc.csv'
     rope_path = CSV_DIR / 'load_rope_enc.csv'
     huizhuan_path = CSV_DIR / 'load_fix_rotation_deg.csv'
@@ -222,8 +232,7 @@ def xieliao_function(plc):
 # 卸料复位功能
 def fuwei_function(plc):
 
-    PROJECT_ROOT = Path(__file__).resolve().parents[3]
-    CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "return"
+    CSV_DIR = resolve_csv_dir("return")
     gan_path = CSV_DIR / 'return_gan_enc.csv'
     rope_path = CSV_DIR / 'return_rope_enc.csv'
     huizhuan_path = CSV_DIR / 'return_fix_rotation_deg.csv'

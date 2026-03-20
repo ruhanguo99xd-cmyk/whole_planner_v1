@@ -9,7 +9,21 @@ import plotly.graph_objects as go
 
 # ===== 路径与固定输出 =====
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "trajectory_planner"
+
+
+def resolve_csv_dir(subdir: str) -> Path:
+    current = Path(__file__).resolve()
+    for ancestor in current.parents:
+        candidate = ancestor / "src" / "vendor" / "excavation_planner_core" / "csv_created" / subdir
+        if candidate.exists():
+            return candidate
+        legacy_candidate = ancestor / "csv_created" / subdir
+        if legacy_candidate.exists():
+            return legacy_candidate
+    return PROJECT_ROOT.parent / "csv_created" / subdir
+
+
+CSV_DIR = resolve_csv_dir("trajectory_planner")
 HTML_OUT = PROJECT_ROOT / "scene_prs_fixed_range.html"  # 固定范围版本
 
 # ===== 全局参数（核心：固定PRS曲面范围）=====

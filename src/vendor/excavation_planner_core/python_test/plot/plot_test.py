@@ -18,7 +18,21 @@ plt.rcParams["axes.unicode_minus"] = False
 # 本文件通常位于：...\tra_palnning\tra_palnning\python\plot_test.py
 # 向上两层得到项目根：...\tra_palnning
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "trajectory_planner"
+
+
+def resolve_csv_dir(subdir: str) -> Path:
+    current = Path(__file__).resolve()
+    for ancestor in current.parents:
+        candidate = ancestor / "src" / "vendor" / "excavation_planner_core" / "csv_created" / subdir
+        if candidate.exists():
+            return candidate
+        legacy_candidate = ancestor / "csv_created" / subdir
+        if legacy_candidate.exists():
+            return legacy_candidate
+    return PROJECT_ROOT.parent / "csv_created" / subdir
+
+
+CSV_DIR = resolve_csv_dir("trajectory_planner")
 HTML_OUT = PROJECT_ROOT / "scene.html"   # 固定文件名；每次运行会覆盖
 
 # ===== 全局参数 =====

@@ -217,7 +217,18 @@ def quintic_trajectory_planning(s0, st, T):
 def dig_function(plc):
 
     PROJECT_ROOT = Path(__file__).resolve().parents[3]
-    CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "trajectory_planner"
+    CSV_DIR = None
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / "src" / "vendor" / "excavation_planner_core" / "csv_created" / "trajectory_planner"
+        if candidate.exists():
+            CSV_DIR = candidate
+            break
+        candidate = ancestor / "csv_created" / "trajectory_planner"
+        if candidate.exists():
+            CSV_DIR = candidate
+            break
+    if CSV_DIR is None:
+        CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "trajectory_planner"
     gan_path = CSV_DIR / 'gan_enc.csv'
     rope_path = CSV_DIR / 'rope_enc.csv'
     huizhuan_path = CSV_DIR / 'huizhuan_enc.csv'
@@ -427,7 +438,18 @@ def rotate_planning_function(plc,angle):
 def xieliao_function(plc):
 
     PROJECT_ROOT = Path(__file__).resolve().parents[3]
-    CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "load"
+    CSV_DIR = None
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / "src" / "vendor" / "excavation_planner_core" / "csv_created" / "load"
+        if candidate.exists():
+            CSV_DIR = candidate
+            break
+        candidate = ancestor / "csv_created" / "load"
+        if candidate.exists():
+            CSV_DIR = candidate
+            break
+    if CSV_DIR is None:
+        CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "load"
     gan_path = CSV_DIR / 'load_gan_enc.csv'
     rope_path = CSV_DIR / 'load_rope_enc.csv'
     huizhuan_path = CSV_DIR / 'load_fix_rotation_deg.csv'
@@ -492,7 +514,18 @@ def xieliao_function(plc):
 def fuwei_function(plc):
 
     PROJECT_ROOT = Path(__file__).resolve().parents[3]
-    CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "return"
+    CSV_DIR = None
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / "src" / "vendor" / "excavation_planner_core" / "csv_created" / "return"
+        if candidate.exists():
+            CSV_DIR = candidate
+            break
+        candidate = ancestor / "csv_created" / "return"
+        if candidate.exists():
+            CSV_DIR = candidate
+            break
+    if CSV_DIR is None:
+        CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "return"
     gan_path = CSV_DIR / 'return_gan_enc.csv'
     rope_path = CSV_DIR / 'return_rope_enc.csv'
     huizhuan_path = CSV_DIR / 'return_fix_rotation_deg.csv'

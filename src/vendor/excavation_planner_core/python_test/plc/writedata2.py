@@ -8,7 +8,21 @@ T = 5.0           # 总时长（秒）
 dt = 0.1           # 采样间隔（秒）
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-CSV_DIR = PROJECT_ROOT.parent / "csv_created" / "trajectory_planner"
+
+
+def resolve_csv_dir(subdir: str) -> Path:
+    current = Path(__file__).resolve()
+    for ancestor in current.parents:
+        candidate = ancestor / "src" / "vendor" / "excavation_planner_core" / "csv_created" / subdir
+        if candidate.exists():
+            return candidate
+        legacy_candidate = ancestor / "csv_created" / subdir
+        if legacy_candidate.exists():
+            return legacy_candidate
+    return PROJECT_ROOT.parent / "csv_created" / subdir
+
+
+CSV_DIR = resolve_csv_dir("trajectory_planner")
 filename = CSV_DIR / 'huizhuan_enc.csv'
 
 def theta_deg(t):

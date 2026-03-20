@@ -14,13 +14,17 @@ plt.rcParams["axes.unicode_minus"] = False
 # 为兼容 ros2_ws/src 与源码根目录运行的情况，向上查找最近存在的 csv_created 目录。
 CSV_DIR = None
 for ancestor in Path(__file__).resolve().parents:
+    candidate = ancestor / "src" / "vendor" / "excavation_planner_core" / "csv_created" / "return"
+    if candidate.exists():
+        CSV_DIR = candidate
+        break
     candidate = ancestor / "csv_created" / "return"
     if candidate.exists():
         CSV_DIR = candidate
         break
 
 if CSV_DIR is None:
-    raise FileNotFoundError("未找到 csv_created/trajectory_planner 目录，请确认挖掘规划已输出 CSV 文件")
+    raise FileNotFoundError("未找到 excavation_planner_core/csv_created/return 或旧版 csv_created/return 目录，请确认挖掘规划已输出 CSV 文件")
 
 vgan = np.loadtxt(CSV_DIR / "return_fix_tuiya.csv", delimiter=",") #杆速
 vrope = np.loadtxt(CSV_DIR / "return_fix_tisheng.csv", delimiter=",") #绳速

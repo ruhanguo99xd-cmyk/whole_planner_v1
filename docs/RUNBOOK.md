@@ -19,13 +19,15 @@ sudo apt-get install -y libnlopt-dev
 
 ## 最终支持的运行版本
 
-当前建议只保留 3 个正式运行版本：
+当前建议只保留 4 个正式运行版本：
 
 1. `mock`
    - 最小闭环验证
-2. `integrated`
+2. `integrated_sim`
+   - 全流程仿真主链，不连接 RTK / 雷达 / 真 PLC
+3. `integrated`
    - 完整联调主链
-3. `hmi`
+4. `hmi`
    - 单独启动统一上位机
 
 统一入口脚本：
@@ -34,6 +36,7 @@ sudo apt-get install -y libnlopt-dev
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
 bash scripts/build_workspace.sh
 bash scripts/run_profile.sh mock
+bash scripts/run_profile.sh integrated_sim
 bash scripts/run_profile.sh integrated
 bash scripts/run_profile.sh hmi
 ```
@@ -49,7 +52,91 @@ bash scripts/run_profile.sh hmi
 
 - `install/setup.bash`
 - `bash scripts/build_workspace.sh`
-- `bash scripts/run_profile.sh <mock|integrated|hmi>`
+- `bash scripts/run_profile.sh <mock|integrated_sim|integrated|hmi>`
+
+现场 / 仿真启动差异、PLC 点位与硬件 IP 审计，优先看：
+
+- `docs/FIELD_SIM_STARTUP_AND_HARDWARE_AUDIT.md`
+
+## 基于原行走 map 的仿真验证
+
+这条链路用于验证原 `autowalk_hmi_qt` 界面、原始地图以及 `autonomous_walk` 的目标点交互，不启动大规划和挖掘 mock 链，避免自动调度干扰。
+
+### 启动 walk-map 验证链
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/build_workspace.sh
+bash scripts/run_profile.sh mock \
+  launch_mock_mission_stack:=false \
+  launch_validation_map:=true \
+  launch_validation_walk_stack:=true \
+  launch_autowalk_hmi_qt:=true
+```
+
+### 这条链会启动什么
+
+- 原地图发布：`static_map_publisher -> /map`
+- 全局/局部 costmap 镜像：`validation_costmap_publisher`
+- 导航动作 mock：`mock_nav2_server`
+- 原始行走核心：`autonomous_walk`
+- 目标点桥接：`goal_pose_bridge`
+- 原上位机：`autowalk_hmi_qt`
+
+### 演示动作
+
+1. 在原 `autowalk_hmi_qt` 地图界面点选目标点
+2. `goal_pose_bridge` 会把 `/goal_pose` 转成 `/autonomous_walk/set_goal`
+3. `autonomous_walk` 触发导航
+4. 界面上能看到：
+   - `/map`
+   - `/global_costmap/costmap`
+   - `/local_costmap/costmap`
+   - `/plan`
+   - `/auto_goal_pose`
+   - `/fake_odom`
+
+### 期望现象
+
+- 地图成功显示
+- 点击目标点后规划路径出现
+- 机器人位置随 `/fake_odom` 移动
+- `autonomous_walk` 日志出现：
+  - `Goal updated: ...`
+  - `Sent navigation goal to nav2`
+  - `Navigation succeeded and goal verified`
+
+### 手动抽查命令
+
+另一个终端可直接抽查：
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+source install/setup.bash
+ros2 topic echo /map --once
+ros2 topic echo /global_costmap/costmap --once
+ros2 topic echo /plan --once
+ros2 topic echo /fake_odom --once
+ros2 topic echo /auto_goal_pose --once
+```
+
+### 如果不想开界面，只做无头验证
+
+```bash
+cd /home/ruhanguo/shovel_robot/whole_planner_v1
+bash scripts/run_profile.sh mock \
+  launch_mock_mission_stack:=false \
+  launch_validation_map:=true \
+  launch_validation_walk_stack:=true
+```
+
+然后手动发目标点：
+
+```bash
+source install/setup.bash
+ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped \
+  "{header: {frame_id: map}, pose: {position: {x: 2.5, y: 1.2, z: 0.0}, orientation: {z: -0.2588190, w: 0.9659258}}}"
+```
 
 ## 运行版本 1：mock 最小闭环
 
@@ -71,7 +158,7 @@ ros2 run mission_dispatcher submit_demo_mission
 ```
 
 ### 期望日志
-- `IDLE -> WALK_PREP -> WALKING -> TRANSITION -> DIG_PREP -> DIGGING -> IDLE`
+- `IDLE -> WALK_SCAN_PREP -> WALK_SCANNING -> TRANSITION -> WALK_PREP -> WALKING -> DIG_PREP -> DIGGING -> IDLE`
 
 ## 运行版本 2：integrated 完整联调主链
 
@@ -108,6 +195,28 @@ cd /home/ruhanguo/shovel_robot/whole_planner_v1
 bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 ```
 
+### 行走前扫描与建图步骤
+
+当前 integrated 流程里，停靠点规划和行走不再直接从 `submit_demo_mission` 开始，而是先经过一段行走前扫描：
+
+1. `submit_mission`
+2. `mission_dispatcher` 进入 `WALK_SCAN_PREP`
+3. dispatcher 调 `/walk_scan/start`
+4. 上位机点击 `确认行走安全 / 开始扫描`
+5. `walk_scan_orchestrator` 调：
+   - `/plc_bridge/release_swing_brake`
+   - `/plc_bridge/start_walk_scan`
+6. 回转机构扫描 360 度
+7. `/map` 更新后，`walk_scan` 进入 `completed`
+8. dispatcher 才会继续：
+   - `/mobility/compute_material_target`
+   - `/mobility/execute START`
+
+说明：
+
+- mock 演示模式下，如果没有真实 `/map` 更新，可使用 `walk_scan_orchestrator` 的 timer fallback 完成 `mapping`
+- real lite_slam 链路接好后，推荐只依赖 `/map` 更新，不依赖 fallback
+
 说明：
 - 推荐 launch 名称已经统一到：
   - `mock.launch.py`
@@ -119,8 +228,11 @@ bash scripts/run_profile.sh integrated launch_operator_hmi:=true
 
 统一上位机当前提供：
 - `大规划` 页签：开始/停止/恢复、手动任务表单、示例任务提交、状态事件流
+- `大规划` 页签新增安全确认按钮：`确认行走安全 / 开始扫描`
 - `大规划` 页签新增手动接管按钮：`手动切行走 / 停止行走 / 手动切挖掘 / 停止挖掘`
 - `行走规划` 页签：参考 `autowalk_hmi_qt`，接入 `map/global_costmap/local_costmap`、目标点、自动目标、物料边界、规划路径、状态灯、`cmd_vel` 与履带速度曲线，并支持地图点选目标
+  - 保留 legacy topic 兼容：`/goal_pose`、`/autonomous_walk/goal_pose`、`/autonomous_walk/status`
+  - 与新接口并存：`/mobility/status`、walk action 手动接管
 - `挖掘规划` 页签：dig 阶段、回转角、`trajectory_planner` 三段实时轨迹、优化中间候选轨迹、推压/提升速度曲线、`load/return` 回转曲线
 
 ### 统一上位机交互提示
@@ -133,27 +245,49 @@ bash scripts/run_profile.sh integrated launch_operator_hmi:=true
   - 这组按钮适合演示切换和人工接管，不会篡改现有自动任务协议
 - 地图点选目标：
   - 进入 `行走规划` 页签
+  - 目标话题可切换：
+    - `/goal_pose`
+    - `/autonomous_walk/goal_pose`
+    - `mirror_both`
   - 勾选“点选目标模式”
   - 在地图上按下设定目标位置
   - 拖动设定朝向
-  - 松开后自动发布到 `/goal_pose`
+  - 松开后按当前目标话题设置自动发布
 - 挖掘实时轨迹：
   - `Seg1/Seg2/Seg3` 是本轮规划的最终三段轨迹
   - `Opt Candidate` 是优化过程中正在尝试的候选轨迹
   - `优化中间态` 卡片显示当前 `eval/objective/fill/tf`
 
 ### 当前最小真实链组成
-- 真实 walk 核心：`autonomous_walk`
-- walk 环境 mock：`mock_nav2_server`
+- 真实 walk 核心：`cedar_nav2_direct`
+- cedar 真车行走链：`bringup/ekf_bringup.launch.py -> rtk_to_odom -> static tf -> robot_localization ekf -> Nav2 -> cmd_vel_to_plc`
+- GPS 天线静态外参：
+  - 优先读取机型文件里的 `gps_antenna.*`
+  - 如果未配置，回退到 `cedar_walk` 已验证的固定安装值
+  - `vendor/mobility_planner_core/config/machines/<machine>.yaml` 里的通用 `extrinsic.*` 仍保留给激光/建图链，不再混用为 GPS 天线外参
+- cedar 互锁兼容：`machine_mode_state_bridge -> /machine_mode_state`
+- 行走前扫描编排：`walk_scan_orchestrator`
+- 行走前扫描输入：`lite_slam_swing_angle_bridge -> /lite_slam/swing_angle_deg`
+- 行走前扫描 PLC 命令：`/plc_bridge/release_swing_brake`、`/plc_bridge/start_walk_scan`、`/plc_bridge/stop_walk_scan`
 - 停靠点接口：`material_target_planner`
 - 在线点云边界提取：`material_boundary_extractor`
 - dig 调度桥：`legacy_dig_planner_orchestrator`
 - dig 真实规划链：`prsdata_server`、`perceive_truck_server`、`trajectory_planner`、`load`、`return`
-- action 协议：`START/STOP/CANCEL` 命令 + `/mobility/status`、`/excavation/status` 状态回传
+- action 协议：`START/STOP/CANCEL` 命令 + `/walk_scan/status`、`/mobility/status`、`/excavation/status` 状态回传
 - 默认启动模式：`launch_legacy_dig_planner:=true`
+- 默认 walk 后端：`mobility_backend:=cedar_nav2_direct`
+- 挖掘标定文件：
+  - 优先读取 `src/vendor/excavation_planner_core/launch_traplanning/config/calib/<machine_model>.yaml`
+  - 若机型文件缺失，当前 `integrated.launch.py` 会回退到 `prototype.yaml`，并在 launch 日志里打印提示
 - 回退旧链路：
 ```bash
-bash scripts/run_profile.sh integrated launch_legacy_dig:=true launch_legacy_dig_planner:=false
+bash scripts/run_profile.sh integrated \
+  mobility_backend:=legacy_autonomous_walk_service \
+  launch_cedar_walk_stack:=false \
+  launch_mock_nav2:=true \
+  launch_legacy_walk:=true \
+  launch_legacy_dig:=true \
+  launch_legacy_dig_planner:=false
 ```
 - 停靠点规划内部结构：
   - `boundary_fit`
@@ -204,21 +338,27 @@ source install/setup.bash
 ros2 run mission_dispatcher submit_demo_mission
 ```
 6. 期望日志
-   - `IDLE -> WALK_PREP -> WALKING`
-   - `Mission queued: ... walk_resolution=material_target:...`
+   - `IDLE -> WALK_SCAN_PREP -> WALK_SCANNING`
+   - `Mission queued: ... walk_resolution=deferred_until_walk_scan`
+   - `walk_scan/status -> waiting_confirm`
+   - `walk_scan/status -> scanning`
+   - `walk_scan/status -> mapping`
+   - `walk_scan/status -> completed`
+   - `TRANSITION -> WALK_PREP -> WALKING`
    - `Sent start command to walk`
    - `Sent stop command to walk`
    - `WALKING -> TRANSITION`
    - `TRANSITION -> DIG_PREP -> DIGGING`
     - `Sent start command to dig`
    - `trajectory_planner` 发布 `excavation_end_length`
-   - `load_node` 输出 `csv_created/load`
-   - `return_node` 输出 `csv_created/return`
+   - `load_node` 输出 `src/vendor/excavation_planner_core/csv_created/load`
+   - `return_node` 输出 `src/vendor/excavation_planner_core/csv_created/return`
    - `Sent stop command to dig`
    - `DIGGING -> IDLE`
 7. 抽查 status topic
 ```bash
 source install/setup.bash
+timeout 8s ros2 topic echo /walk_scan/status --once
 timeout 8s ros2 topic echo /mobility/status --once
 timeout 8s ros2 topic echo /excavation/status --once
 ```
@@ -272,7 +412,7 @@ ros2 service call /mission_dispatcher/stop std_srvs/srv/Trigger '{}'
    - `return 在等待开始信号阶段被取消`
 5. 验收要点
    - cancel 后不应再看到新的 `load/return 规划完成` 日志
-   - cancel 后工作区根目录不应新生成 `csv_created/load`、`csv_created/return`
+  - cancel 后不应在 `src/vendor/excavation_planner_core/csv_created/load`、`src/vendor/excavation_planner_core/csv_created/return` 下生成新的本轮产物
 
 ### 通过物料接口提交任务
 ```bash
@@ -282,7 +422,8 @@ ros2 run mission_dispatcher submit_demo_mission
 
 当前 demo 会走：
 - `use_material_target=true`
-- `mission_dispatcher -> /mobility/compute_material_target -> resolved_walk_target`
+- `mission_dispatcher -> /walk_scan/start -> 人工确认安全 -> 360 度扫描建图`
+- `walk_scan completed -> /mobility/compute_material_target -> resolved_walk_target`
 - `resolved_walk_target -> /mobility/execute`
 - `debug_json.layers == ["boundary_fit", "work_band", "candidate_evaluation"]`
 - `debug_json.planner == "material_target_planner_v4"`
@@ -326,33 +467,47 @@ bash scripts/run_profile.sh hmi
 ```
 4. 期望行为：
    - 可以在一个窗口里切换 `大规划 / 行走规划 / 挖掘规划`
-   - `大规划` 页签能看到 `/mission_dispatcher/mode`、`/mobility/status`、`/excavation/status`、`/plc/status`
+   - `大规划` 页签能看到 `/mission_dispatcher/mode`、`/walk_scan/status`、`/mobility/status`、`/excavation/status`、`/plc/status`
+   - `大规划` 页签能点击 `确认行走安全 / 开始扫描`，并看到扫描状态从 `waiting_confirm -> scanning -> mapping`
    - `大规划` 页签能通过手动接管按钮直接切到行走或挖掘，并在事件流里看到 action `received`
    - `行走规划` 页签能显示 `map/global_costmap/local_costmap`、`/plan`、当前位置、目标点和履带速度曲线
    - `行走规划` 页签开启“点选目标模式”后，可以鼠标拖拽下发 `/goal_pose`
    - `挖掘规划` 页签能直接显示 `digging/debug/*` 实时轨迹、优化候选轨迹和平滑回转曲线
 
 当前直接 `pytest` 口径：
-- `23 passed`
+- `15 passed`
 
 当前干净 `colcon test` 口径：
-- `mobility_planner_core`: `24 tests`
-- `mission_dispatcher + plc_adapter + mobility_planner_core + excavation_planner_core`: `36 tests`
+- `mobility_planner_core`: `29 tests`
+- `mission_dispatcher`: `5 tests`
+- `mission_operator_hmi`: `15 tests`
+- `excavation_planner_core`: `7 tests`
+- `plc_adapter`: `1 test`
+- 合计：`57 tests, 0 errors, 0 failures, 0 skipped`
 
 ### 启用在线点云边界提取
 默认 `integrated.launch.py` 已包含：
 - `material_boundary_extractor`
 - `material_target_planner(enable_boundary_extractor=true)`
 - `config/perception/material_boundary_extrinsic/<machine_model>.yaml` 自动加载
+- `config/planning/material_target/<machine_model>.yaml` 自动加载
 
 静态外参配置目录：
 - `config/perception/material_boundary_extrinsic/default.yaml`
 - `config/perception/material_boundary_extrinsic/prototype.yaml`
 
+停靠点参数配置目录：
+- `config/planning/material_target/default.yaml`
+- `config/planning/material_target/prototype.yaml`
+- `config/planning/material_target/M001.yaml`
+
 当前加载规则：
 - 优先读取 `config/perception/material_boundary_extrinsic/<machine_model>.yaml`
 - 如果该机型文件不存在，回退到 `config/perception/material_boundary_extrinsic/default.yaml`
+- 优先读取 `config/planning/material_target/<machine_model>.yaml`
+- 如果该机型文件不存在，回退到 `config/planning/material_target/default.yaml`
 - 命令行传入的 `boundary_*` launch 参数仍然会覆盖 YAML 中的同名参数
+- 任务里的 `material_profile_json / planner_constraints_json` 仍然会覆盖机型 YAML
 
 如需指定真实点云 topic：
 ```bash
@@ -365,6 +520,14 @@ bash scripts/run_profile.sh integrated material_point_cloud_topic:=/your/point_c
 cd /home/ruhanguo/shovel_robot/whole_planner_v1
 bash scripts/run_profile.sh integrated machine_model:=prototype material_point_cloud_topic:=/your/point_cloud_topic
 ```
+
+停靠点参数总表：
+- `docs/MATERIAL_TARGET_PARAMETER_TABLE.md`
+
+统一上位机调参辅助：
+- `大规划` 页签右侧 JSON 区新增“停靠点调参工具”
+- 可直接按当前 `Machine` 载入 `config/planning/material_target/<machine_model>.yaml`
+- 可将当前 `material_profile_json` 一键复制为 JSON，方便任务级调参与留档
 
 如需临时覆盖 YAML 中的外参，也可以继续在命令行显式传入：
 ```bash
@@ -512,7 +675,7 @@ sudo apt-get install -y libnlopt-dev
 ### 子系统已经完成但大规划不切相
 - 现象：walk/dig 已完成，但 dispatcher 还停在 `WALKING` 或 `DIGGING`
 - 检查：
-  - `/mobility/status` 或 `/excavation/status` 是否发布了 `completed`
+  - `/walk_scan/status`、`/mobility/status` 或 `/excavation/status` 是否发布了 `completed`
   - 随后是否发布了 `stopped` 或 `idle`
   - `mission_id` 是否与当前任务一致
 - 处理：优先排查 legacy backend 的状态发布链，不要在 dispatcher 内硬编码补状态
@@ -553,4 +716,5 @@ ros2 action send_goal /excavation/execute integrated_mission_interfaces/action/D
 ```bash
 source install/setup.bash
 ros2 topic echo /mission_dispatcher/mode
+ros2 topic echo /walk_scan/status
 ```
